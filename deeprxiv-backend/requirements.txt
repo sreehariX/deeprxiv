@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-multipart
+pydantic
+requests
+PyPDF2
+opencv-python
+numpy
+python-dotenv
+google-genai
+pillow
+pdf2image
