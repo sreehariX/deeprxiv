@@ -5,15 +5,16 @@ const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  context: { params: { path: string[] } }
 ) {
   try {
-    const path = params.path.join('/');
-    const url = `${API_BASE_URL}/${path}`;
+    // Access params directly without destructuring
+    const pathString = Array.isArray(context.params.path) ? context.params.path.join('/') : '';
+    const url = `${API_BASE_URL}/${pathString}`;
 
     try {
       // Check if we're fetching an image
-      if (path.includes('image/')) {
+      if (pathString.includes('image/')) {
         const response = await axios.get(url, { 
           responseType: 'arraybuffer',
           timeout: 5000
@@ -53,11 +54,12 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  context: { params: { path: string[] } }
 ) {
   try {
-    const path = params.path.join('/');
-    const url = `${API_BASE_URL}/${path}`;
+    // Access params directly without destructuring
+    const pathString = Array.isArray(context.params.path) ? context.params.path.join('/') : '';
+    const url = `${API_BASE_URL}/${pathString}`;
     
     let body;
     try {

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import axios from 'axios';
+import { ActivitySquare, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 
 export default function HealthCheckButton() {
   const [status, setStatus] = useState<'idle' | 'checking' | 'online' | 'offline'>('idle');
@@ -32,47 +33,90 @@ export default function HealthCheckButton() {
     <div className="flex flex-col items-center">
       <button
         onClick={checkHealth}
-        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className={`flex items-center space-x-2 px-5 py-2.5 rounded-lg font-medium transition-all ${
+          status === 'idle' 
+            ? 'bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-800 dark:hover:bg-gray-700 dark:text-gray-200' 
+            : status === 'checking'
+            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 cursor-wait'
+            : status === 'online'
+            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+            : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+        }`}
         disabled={status === 'checking'}
       >
-        {status === 'checking' ? 'Checking...' : 'Check Backend Health'}
+        {status === 'idle' && (
+          <>
+            <ActivitySquare className="w-5 h-5" />
+            <span>Check Backend Status</span>
+          </>
+        )}
+        
+        {status === 'checking' && (
+          <>
+            <div className="w-5 h-5 border-t-2 border-b-2 border-current rounded-full animate-spin"></div>
+            <span>Checking Status...</span>
+          </>
+        )}
+        
+        {status === 'online' && (
+          <>
+            <CheckCircle className="w-5 h-5" />
+            <span>Backend Online</span>
+          </>
+        )}
+        
+        {status === 'offline' && (
+          <>
+            <XCircle className="w-5 h-5" />
+            <span>Backend Offline</span>
+          </>
+        )}
       </button>
       
       {status !== 'idle' && (
-        <div className={`mt-4 p-3 rounded-md w-full ${
-          status === 'checking' ? 'bg-blue-50' :
-          status === 'online' ? 'bg-green-50' : 'bg-red-50'
+        <div className={`mt-4 p-4 rounded-lg border w-full ${
+          status === 'checking' 
+            ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800' 
+            : status === 'online'
+            ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
+            : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
         }`}>
           {status === 'checking' && (
             <div className="flex items-center justify-center">
-              <div className="w-4 h-4 border-t-2 border-blue-500 border-solid rounded-full animate-spin mr-2"></div>
-              <p className="text-blue-600">Checking backend health...</p>
+              <div className="w-4 h-4 border-t-2 border-blue-500 dark:border-blue-400 border-solid rounded-full animate-spin mr-2"></div>
+              <p className="text-blue-600 dark:text-blue-400">Checking backend status...</p>
             </div>
           )}
           
           {status === 'online' && (
             <div className="text-center">
-              <p className="text-green-600 font-semibold">✓ Backend is online!</p>
+              <div className="flex items-center justify-center mb-2">
+                <CheckCircle className="w-8 h-8 text-green-500 dark:text-green-400" />
+              </div>
+              <p className="text-green-600 dark:text-green-400 font-semibold text-lg">Backend is online!</p>
               {responseTime && (
-                <p className="text-green-500 text-sm">
+                <div className="inline-flex items-center justify-center bg-green-100 dark:bg-green-800/30 px-2.5 py-0.5 rounded-full text-sm font-medium text-green-800 dark:text-green-300 mt-2">
                   Response time: {responseTime}ms
-                </p>
+                </div>
               )}
             </div>
           )}
           
           {status === 'offline' && (
             <div className="text-center">
-              <p className="text-red-600 font-semibold">✗ Backend is offline</p>
-              <p className="text-red-500 text-sm mt-1">
+              <div className="flex items-center justify-center mb-2">
+                <AlertTriangle className="w-8 h-8 text-red-500 dark:text-red-400" />
+              </div>
+              <p className="text-red-600 dark:text-red-400 font-semibold text-lg mb-2">Backend is offline</p>
+              <p className="text-red-500 dark:text-red-400 text-sm mb-4">
                 Unable to connect to backend at http://127.0.0.1:8000/api
               </p>
-              <div className="mt-3 p-3 bg-gray-100 rounded text-xs text-gray-800 font-mono">
-                <p className="font-semibold mb-1">To start the backend server:</p>
+              <div className="bg-white dark:bg-gray-800 rounded-lg p-4 text-xs text-gray-800 dark:text-gray-300 font-mono">
+                <p className="font-semibold mb-2">To start the backend server:</p>
                 <ol className="list-decimal pl-5 space-y-1 text-left">
                   <li>Open a terminal/command prompt</li>
                   <li>Navigate to the deeprxiv-backend directory</li>
-                  <li>Run: <code className="bg-gray-200 px-1 py-0.5 rounded">python run.py</code></li>
+                  <li>Run: <code className="bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">python run.py</code></li>
                 </ol>
               </div>
             </div>
