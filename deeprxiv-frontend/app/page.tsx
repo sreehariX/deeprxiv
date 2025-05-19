@@ -1,10 +1,7 @@
 import UrlInput from '../components/UrlInput';
 import HealthCheckButton from '../components/HealthCheckButton';
 import Link from 'next/link';
-import { ArrowRight, BookOpen, FileText, Image, Terminal, Clock } from 'lucide-react';
-
-// Add Papers List component
-import PapersList from '../components/PapersList';
+import { ArrowRight, BookOpen, FileText, Image, Terminal, Clock, ChevronRight } from 'lucide-react';
 
 export default function Home() {
   return (
@@ -22,19 +19,17 @@ export default function Home() {
           </div>
           
           <div className="w-full max-w-3xl mx-auto mt-12 mb-8">
-        <UrlInput />
-      </div>
-      
-          <div className="w-full max-w-md mx-auto">
-            <HealthCheckButton />
+            <UrlInput />
           </div>
-        </div>
-      </section>
-
-      {/* Papers List Section */}
-      <section className="w-full py-8 md:py-12">
-        <div className="container px-4 md:px-6 max-w-6xl mx-auto">
-          <PapersList />
+          
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-8">
+            <HealthCheckButton />
+            
+            <Link href="/papers" className="flex items-center text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
+              <span>View Processed Papers</span>
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Link>
+          </div>
         </div>
       </section>
 

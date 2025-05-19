@@ -8,8 +8,8 @@ export async function GET(
   context: { params: { path: string[] } }
 ) {
   try {
-    // Properly access params in the App Router
-    const { path } = context.params;
+    // Properly await params in the App Router
+    const path = context.params.path;
     const pathString = Array.isArray(path) ? path.join('/') : '';
     const url = `${API_BASE_URL}/${pathString}`;
 
@@ -58,8 +58,8 @@ export async function POST(
   context: { params: { path: string[] } }
 ) {
   try {
-    // Properly access params in the App Router
-    const { path } = context.params;
+    // Properly await params in the App Router
+    const path = context.params.path;
     const pathString = Array.isArray(path) ? path.join('/') : '';
     const url = `${API_BASE_URL}/${pathString}`;
     

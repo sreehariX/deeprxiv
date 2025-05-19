@@ -20,15 +20,31 @@ export interface PaperDetail {
   pdf_url?: string;
   extracted_text?: string;
   images?: Image[];
+  sections?: Section[];
+  citations?: Citation[];
   processed: boolean;
   created_at?: string;
   updated_at?: string;
 }
 
 export interface Section {
-  heading: string;
-  summary: string;
-  key_points: string[];
+  id: string;
+  title: string;
+  content: string;
+  citations?: number[];
+  subsections?: SubSection[];
+}
+
+export interface SubSection {
+  id: string;
+  title: string;
+  content: string;
+  citations?: number[];
+}
+
+export interface Citation {
+  url: string;
+  title?: string;
 }
 
 export interface Image {
@@ -147,6 +163,17 @@ export async function getPapers(): Promise<Paper[]> {
       }
     }
     throw new Error('Failed to get papers list');
+  }
+}
+
+// Get list of only processed papers (filtered)
+export async function getProcessedPapers(): Promise<Paper[]> {
+  try {
+    const allPapers = await getPapers();
+    // Filter to only include papers that have been processed
+    return allPapers.filter(paper => paper.processed === true);
+  } catch (error) {
+    throw error; // Re-throw to be handled by the caller
   }
 }
 

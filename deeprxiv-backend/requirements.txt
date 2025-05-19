@@ -9,6 +9,5 @@ PyPDF2
 opencv-python
 numpy
 python-dotenv
-google-genai
 pillow
 pdf2image

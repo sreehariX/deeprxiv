@@ -1,25 +1,74 @@
 import os
-from google import genai
-from dotenv import load_dotenv
+import requests
 import json
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Configure the Gemini API
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
 class LLMService:
     def __init__(self):
-        self.client = client
-        self.model = 'gemini-2.5-flash-preview-04-17'
-        self.flash_model = 'gemini-2.5-flash-preview-04-17'
+        self.api_url = "https://api.perplexity.ai/chat/completions"
+        self.api_key = os.getenv("PERPLEXITY_API_KEY")
+        self.model = "sonar"  # Perplexity's default model
+        
+        if not self.api_key:
+            print("WARNING: PERPLEXITY_API_KEY environment variable not set!")
+    
+    def _call_perplexity_api(self, prompt, system_prompt="Be precise and concise."):
+        """
+        Makes a call to the Perplexity API with the given prompt.
+        Returns the response text and citations.
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+        
+        try:
+            response = requests.post(self.api_url, json=payload, headers=headers)
+            response.raise_for_status()
+            
+            response_data = response.json()
+            content = response_data["choices"][0]["message"]["content"]
+            
+            # Extract citations if available
+            citations = response_data.get("citations", [])
+            
+            return {
+                "content": content,
+                "citations": citations
+            }
+        except Exception as e:
+            print(f"Error calling Perplexity API: {str(e)}")
+            if response and hasattr(response, 'text'):
+                print(f"Response text: {response.text}")
+            return {
+                "content": f"Error: {str(e)}",
+                "citations": []
+            }
     
     def extract_paper_metadata_flash(self, text_first_pages):
         """
-        Extract basic paper metadata using Gemini Flash model.
+        Extract basic paper metadata using Perplexity API.
         Takes the text from the first few pages of the paper.
         """
+        system_prompt = "Extract metadata from the scientific paper text and provide the result as a valid JSON object."
+        
         prompt = f"""
         Extract the following information from this scientific paper text:
         1. Title
@@ -33,23 +82,31 @@ class LLMService:
         {text_first_pages}
         """
         
-        print("Sending metadata extraction request to Gemini Flash model...")
+        print("Sending metadata extraction request to Perplexity API...")
         try:
-            response = self.client.models.generate_content(
-                model=self.flash_model,
-                contents=prompt
-            )
-            print(f"Received response from Gemini (length: {len(response.text)})")
-            return response.text
+            result = self._call_perplexity_api(prompt, system_prompt)
+            
+            # Try to extract JSON from the response
+            content = result["content"]
+            print(f"Received response from Perplexity (length: {len(content)})")
+            
+            # Sometimes the model might wrap the JSON in markdown code blocks
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+                
+            return content
         except Exception as e:
-            print(f"Error extracting metadata with Flash: {str(e)}")
-            print(f"Prompt length: {len(prompt)}")
+            print(f"Error extracting metadata: {str(e)}")
             return '{{"Title": "Unknown Title", "Authors": ["Unknown Author"], "Abstract": "No abstract available"}}'
     
     def generate_paper_metadata(self, paper_data):
         """Generate metadata about the paper."""
+        system_prompt = "You are a scientific paper analyzer. Extract metadata in valid JSON format."
+        
         prompt = f"""
-        You are a scientific paper analyzer. I'm going to provide you with the content of a research paper.
+        I'm going to provide you with the content of a research paper.
         Please extract and provide the following metadata in JSON format:
         
         1. Title
@@ -67,11 +124,8 @@ class LLMService:
         """
         
         try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt
-            )
-            return response.text
+            result = self._call_perplexity_api(prompt, system_prompt)
+            return result["content"]
         except Exception as e:
             print(f"Error generating metadata: {str(e)}")
             return '{{"error": "Failed to generate metadata"}}'
@@ -79,10 +133,12 @@ class LLMService:
     def generate_paper_sections(self, paper_text):
         """
         Generate sections and subsections for a paper based on its content.
-        Returns a structured JSON representing the paper's organization.
+        Returns a structured JSON representing the paper's organization along with citations.
         """
+        system_prompt = "You are an academic paper analyzer. Create a structured outline in valid JSON format."
+        
         prompt = f"""
-        You are an academic paper analyzer. I'm providing you with the text of a scientific paper.
+        I'm providing you with the text of a scientific paper.
         Please analyze this paper and create a structured outline with sections and subsections, similar to a wiki.
 
         Your output should be a valid JSON array with this structure:
@@ -91,11 +147,13 @@ class LLMService:
                 "id": "unique-id-for-section",
                 "title": "Section Title",
                 "content": "Summary of this section's content",
+                "citations": [1, 2, 3], // Reference indices to the citations you provide
                 "subsections": [
                     {{
                         "id": "unique-id-for-subsection",
                         "title": "Subsection Title",
-                        "content": "Detailed content for this subsection"
+                        "content": "Detailed content for this subsection",
+                        "citations": [2, 4] // Reference indices to the citations you provide
                     }}
                 ]
             }}
@@ -105,6 +163,7 @@ class LLMService:
         - "id" should be a slug-like identifier (lowercase, hyphens for spaces)
         - "title" should reflect the actual section name from the paper or a logical name
         - "content" should summarize the key points, findings, or information
+        - "citations" should include references to support the content
         
         Include all major sections like:
         - Introduction/Overview
@@ -119,48 +178,59 @@ class LLMService:
         {paper_text[:50000]}  # Using first 50k characters to stay within token limits
         """
         
-        print("Sending section generation request to Gemini model...")
+        print("Sending section generation request to Perplexity API...")
         try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt
-            )
+            result = self._call_perplexity_api(prompt, system_prompt)
             
             # Process the response to ensure it's valid JSON
-            result = response.text
-            print(f"Received raw response from Gemini (length: {len(result)})")
+            content = result["content"]
+            citations = result["citations"]
             
-            if result.startswith("```json"):
-                result = result.replace("```json", "", 1)
-                if result.endswith("```"):
-                    result = result[:-3]
-                result = result.strip()
-                print("Cleaned JSON response")
+            print(f"Received raw response from Perplexity (length: {len(content)})")
+            
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
             
             # Parse and validate the JSON
-            sections = json.loads(result.strip())
+            sections = json.loads(content.strip())
             print(f"Successfully parsed JSON response with {len(sections)} sections")
-            return sections
+            
+            # Add citations to the response
+            response_with_citations = {
+                "sections": sections,
+                "citations": citations
+            }
+            
+            return response_with_citations
         except Exception as e:
             print(f"Error generating paper sections: {str(e)}")
             import traceback
             traceback.print_exc()
             
             # Return a basic structure in case of error
-            return [
-                {
-                    "id": "overview",
-                    "title": "Overview",
-                    "content": "Paper content could not be automatically sectioned.",
-                    "subsections": []
-                }
-            ]
+            return {
+                "sections": [
+                    {
+                        "id": "overview",
+                        "title": "Overview",
+                        "content": "Paper content could not be automatically sectioned.",
+                        "citations": [],
+                        "subsections": []
+                    }
+                ],
+                "citations": []
+            }
     
     def generate_section_content(self, paper_text, section_title, section_content):
         """
         Generate detailed content for a specific section or subsection.
         Uses the section title and existing content as context.
+        Returns the content and citations.
         """
+        system_prompt = "You are analyzing a scientific paper section. Provide a detailed analysis with citations."
+        
         prompt = f"""
         You are analyzing a scientific paper section titled "{section_title}".
         
@@ -183,13 +253,19 @@ class LLMService:
         
         print(f"Generating content for section/subsection: {section_title}")
         try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt
-            )
-            result = response.text
-            print(f"Generated content length: {len(result)} characters")
-            return result
+            result = self._call_perplexity_api(prompt, system_prompt)
+            content = result["content"]
+            citations = result["citations"]
+            
+            print(f"Generated content length: {len(content)} characters")
+            
+            return {
+                "content": content,
+                "citations": citations
+            }
         except Exception as e:
             print(f"Error generating section content for '{section_title}': {str(e)}")
-            return f"Content generation for section '{section_title}' failed due to: {str(e)}" 
+            return {
+                "content": f"Content generation for section '{section_title}' failed due to: {str(e)}",
+                "citations": []
+            } 
