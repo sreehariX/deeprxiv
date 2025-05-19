@@ -18,7 +18,7 @@ The project consists of two main components:
 
 - PDF processing and extraction
 - SQLite database (default) or PostgreSQL for storing papers and extracted content
-- Integration with Google Gemini AI for paper analysis
+- Integration with Perplexity AI for paper analysis
 
 ### Frontend (Next.js)
 
@@ -63,7 +63,7 @@ pip install -r requirements.txt
 5. Create a `.env` file with the following content:
 ```
 # For SQLite (default if DATABASE_URL is not provided)
-GEMINI_API_KEY=AIzaSyBCYtM1eUIJ0v2R4xLZ7sHTsOz6KhNcKv8
+PERPLEXITY_API_KEY=your_api_key_here
 
 # For PostgreSQL (optional)
 # DATABASE_URL=postgresql://username:password@localhost:5432/deeprxiv
@@ -108,7 +108,7 @@ npm run dev
   - SQLAlchemy
   - PyPDF2
   - OpenCV
-  - Google Gemini API
+  - Perplexity AI API
 
 - **Frontend**:
   - Next.js
