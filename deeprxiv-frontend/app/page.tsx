@@ -1,7 +1,10 @@
 import UrlInput from '../components/UrlInput';
 import HealthCheckButton from '../components/HealthCheckButton';
 import Link from 'next/link';
-import { ArrowRight, BookOpen, FileText, Image, Terminal } from 'lucide-react';
+import { ArrowRight, BookOpen, FileText, Image, Terminal, Clock } from 'lucide-react';
+
+// Add Papers List component
+import PapersList from '../components/PapersList';
 
 export default function Home() {
   return (
@@ -25,6 +28,13 @@ export default function Home() {
           <div className="w-full max-w-md mx-auto">
             <HealthCheckButton />
           </div>
+        </div>
+      </section>
+
+      {/* Papers List Section */}
+      <section className="w-full py-8 md:py-12">
+        <div className="container px-4 md:px-6 max-w-6xl mx-auto">
+          <PapersList />
         </div>
       </section>
 

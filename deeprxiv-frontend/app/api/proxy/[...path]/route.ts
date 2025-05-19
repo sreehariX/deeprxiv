@@ -8,8 +8,9 @@ export async function GET(
   context: { params: { path: string[] } }
 ) {
   try {
-    // Access params directly without destructuring
-    const pathString = Array.isArray(context.params.path) ? context.params.path.join('/') : '';
+    // Properly access params in the App Router
+    const { path } = context.params;
+    const pathString = Array.isArray(path) ? path.join('/') : '';
     const url = `${API_BASE_URL}/${pathString}`;
 
     try {
@@ -57,8 +58,9 @@ export async function POST(
   context: { params: { path: string[] } }
 ) {
   try {
-    // Access params directly without destructuring
-    const pathString = Array.isArray(context.params.path) ? context.params.path.join('/') : '';
+    // Properly access params in the App Router
+    const { path } = context.params;
+    const pathString = Array.isArray(path) ? path.join('/') : '';
     const url = `${API_BASE_URL}/${pathString}`;
     
     let body;
@@ -71,7 +73,7 @@ export async function POST(
     console.log(`Proxying POST request to: ${url}`);
     
     try {
-      const response = await axios.post(url, body, { timeout: 30000 });
+      const response = await axios.post(url, body, { timeout: 60000 });
       return NextResponse.json(response.data);
     } catch (error) {
       console.error('Failed to connect to backend:', error);

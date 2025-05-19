@@ -56,7 +56,7 @@ export interface Table {
 }
 
 // Process an arXiv URL
-export async function processArxivURL(url: string): Promise<Paper> {
+export async function processArxivUrl(url: string): Promise<Paper> {
   try {
     const response = await axios.post(`${API_BASE_URL}/process`, { url }, {
       timeout: 30000, // 30 second timeout
@@ -75,7 +75,7 @@ export async function processArxivURL(url: string): Promise<Paper> {
 }
 
 // Get paper details by arXiv ID
-export async function getPaperDetails(arxivId: string): Promise<PaperDetail> {
+export async function getPaper(arxivId: string): Promise<PaperDetail> {
   try {
     const response = await axios.get(`${API_BASE_URL}/paper/${arxivId}`, {
       timeout: 10000, // 10 second timeout
@@ -113,27 +113,41 @@ export async function getPaperImages(arxivId: string): Promise<Image[]> {
 }
 
 // Get processing status of a paper
-export async function getProcessingStatus(arxivId: string): Promise<{ arxiv_id: string; processed: boolean }> {
-  const response = await fetch(`${API_BASE_URL}/status/${arxivId}`);
-
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || 'Failed to get processing status');
+export async function getPaperStatus(arxivId: string): Promise<{ arxiv_id: string; processed: boolean; progress?: string }> {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/paper/${arxivId}/status`, {
+      timeout: 5000, // 5 second timeout
+    });
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      if (error.response) {
+        throw new Error(error.response.data.detail || 'Failed to get paper status');
+      } else if (error.request) {
+        throw new Error('Cannot connect to backend server. Please ensure the backend is running.');
+      }
+    }
+    throw new Error('Failed to get paper status');
   }
-
-  return response.json();
 }
 
 // Get list of all processed papers
-export async function getProcessedPapers(): Promise<Paper[]> {
-  const response = await fetch(`${API_BASE_URL}/papers`);
-
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || 'Failed to get processed papers');
+export async function getPapers(): Promise<Paper[]> {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/papers`, {
+      timeout: 10000, // 10 second timeout
+    });
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      if (error.response) {
+        throw new Error(error.response.data.detail || 'Failed to get papers list');
+      } else if (error.request) {
+        throw new Error('Cannot connect to backend server. Please ensure the backend is running.');
+      }
+    }
+    throw new Error('Failed to get papers list');
   }
-
-  return response.json();
 }
 
 // Extract arXiv ID from URL

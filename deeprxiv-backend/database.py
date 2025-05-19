@@ -1,6 +1,6 @@
-from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, JSON, Text, Boolean, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, JSON, Text, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 import os
 from dotenv import load_dotenv
 from datetime import datetime
@@ -25,13 +25,14 @@ class Paper(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     arxiv_id = Column(String, unique=True, index=True)
-    title = Column(String)
-    authors = Column(String)
-    abstract = Column(Text)
-    pdf_url = Column(String)
-    pdf_data = Column(LargeBinary)
-    extracted_text = Column(Text)
-    extracted_images = Column(JSON)  # Store image paths and metadata
+    title = Column(String, nullable=True)
+    authors = Column(String, nullable=True)
+    abstract = Column(Text, nullable=True)
+    pdf_url = Column(String, nullable=True)
+    pdf_data = Column(LargeBinary, nullable=True)
+    extracted_text = Column(Text, nullable=True)
+    extracted_images = Column(Text, nullable=True)  # JSON string of image data
+    sections_data = Column(Text, nullable=True)  # JSON string of sections and subsections
     processed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

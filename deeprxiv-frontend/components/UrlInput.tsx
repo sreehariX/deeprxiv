@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { processArxivURL, extractArxivId } from '../utils/api';
+import { useState, useEffect } from 'react';
+import { processArxivUrl, getPaperStatus, extractArxivId } from '../utils/api';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, CheckCircle, Clock, Search } from 'lucide-react';
 
@@ -11,15 +11,55 @@ export default function UrlInput() {
   const [error, setError] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [processingTime, setProcessingTime] = useState<number | null>(null);
+  const [arxivId, setArxivId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string>('Processing paper...');
   const router = useRouter();
+
+  // Effect to poll for paper status
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+    
+    if (loading && arxivId) {
+      // Start polling for status every 5 seconds
+      intervalId = setInterval(async () => {
+        try {
+          const status = await getPaperStatus(arxivId);
+          
+          if (status.processed) {
+            // Paper processing is complete
+            clearInterval(intervalId);
+            const endTime = Date.now();
+            setProcessingTime(endTime - (startTime || endTime));
+            setLoading(false);
+            setStatusMessage('Processing complete!');
+            
+            // Redirect to the paper page
+            setTimeout(() => {
+              router.push(`/abs/${arxivId}`);
+            }, 1000);
+          } else if (status.progress) {
+            // Update status message if provided
+            setStatusMessage(`Processing: ${status.progress}`);
+          }
+        } catch (err) {
+          console.log('Error checking paper status:', err);
+          // Don't stop polling on error, just continue
+        }
+      }, 5000);
+    }
+    
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [loading, arxivId, startTime, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     
     // Validate URL format
-    const arxivId = extractArxivId(url);
-    if (!arxivId) {
+    const extractedArxivId = extractArxivId(url);
+    if (!extractedArxivId) {
       setError('Please enter a valid arXiv URL (e.g., https://arxiv.org/abs/1706.03762)');
       return;
     }
@@ -27,17 +67,12 @@ export default function UrlInput() {
     setLoading(true);
     setStartTime(Date.now());
     setProcessingTime(null);
+    setArxivId(extractedArxivId);
     
     try {
-      await processArxivURL(url);
-      // Calculate processing time
-      const endTime = Date.now();
-      setProcessingTime(endTime - (startTime || endTime));
-      
-      // Redirect to the paper page
-      setTimeout(() => {
-        router.push(`/abs/${arxivId}`);
-      }, 1000); // Small delay to show processing time
+      // Initiate paper processing
+      await processArxivUrl(url);
+      setStatusMessage('Processing started. This may take a few minutes...');
     } catch (err) {
       let errorMessage = err instanceof Error ? err.message : 'An error occurred while processing the URL';
       
@@ -51,14 +86,15 @@ export default function UrlInput() {
       setError(errorMessage);
       setLoading(false);
       setProcessingTime(null);
+      setArxivId(null);
     }
   };
 
   // Function to handle opening the paper directly without processing
   const handleViewDirect = () => {
-    const arxivId = extractArxivId(url);
-    if (arxivId) {
-      router.push(`/abs/${arxivId}`);
+    const id = extractArxivId(url);
+    if (id) {
+      router.push(`/abs/${id}`);
     }
   };
 
@@ -123,7 +159,7 @@ export default function UrlInput() {
                 <div className="w-8 h-8 border-t-2 border-b-2 border-blue-500 dark:border-blue-400 rounded-full animate-spin"></div>
               </div>
               <div>
-                <p className="text-blue-600 dark:text-blue-400 font-medium">Processing paper... Please wait</p>
+                <p className="text-blue-600 dark:text-blue-400 font-medium">{statusMessage}</p>
                 {startTime && (
                   <div className="flex items-center mt-1">
                     <Clock className="w-4 h-4 text-blue-500 dark:text-blue-400 mr-1" />
@@ -132,6 +168,9 @@ export default function UrlInput() {
                     </p>
                   </div>
                 )}
+                <p className="text-xs text-blue-400 dark:text-blue-300 mt-2">
+                  Note: LLM-powered section generation may take 1-2 minutes
+                </p>
               </div>
             </div>
           </div>

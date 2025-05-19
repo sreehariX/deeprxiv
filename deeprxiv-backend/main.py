@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ import sqlite3
 import sqlalchemy
 from datetime import datetime
 from dotenv import load_dotenv
+import threading
 
 # Load environment variables
 load_dotenv('.env.local')
@@ -72,16 +73,25 @@ class PaperDetailResponse(BaseModel):
     pdf_url: Optional[str] = None
     extracted_text: Optional[str] = None
     images: Optional[List[dict]] = None
+    sections: Optional[List[dict]] = None
     processed: bool
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+class PaperStatusResponse(BaseModel):
+    arxiv_id: str
+    processed: bool
+    progress: Optional[str] = None
+
+# Track progress for each paper
+paper_processing_status = {}
 
 @app.get("/")
 def read_root():
     return {"message": "Welcome to DeepRxiv API"}
 
 @app.post("/api/process", response_model=PaperResponse)
-async def process_arxiv_url(request: ArxivURLRequest, db: Session = Depends(get_db)):
+async def process_arxiv_url(request: ArxivURLRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Process an arXiv URL and extract paper content."""
     url = request.url
     
@@ -122,9 +132,8 @@ async def process_arxiv_url(request: ArxivURLRequest, db: Session = Depends(get_
         db.commit()
         db.refresh(new_paper)
         
-        # Start background processing task (in a real app, use background tasks)
-        # For now, we'll process synchronously
-        process_paper(arxiv_id, db)
+        # Start processing in background thread
+        background_tasks.add_task(process_paper, arxiv_id, None)
         
         return PaperResponse(
             arxiv_id=new_paper.arxiv_id,
@@ -138,27 +147,57 @@ async def process_arxiv_url(request: ArxivURLRequest, db: Session = Depends(get_
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error processing paper: {str(e)}")
 
-def process_paper(arxiv_id: str, db: Session):
+def process_paper(arxiv_id: str, db: Session = None):
     """Process a paper and update the database."""
+    # Import database modules locally to ensure they're available in this context
+    from database import SessionLocal
+    
+    # Create a new session if one wasn't provided
+    own_session = False
+    if db is None:
+        db = SessionLocal()
+        own_session = True
+        
     paper = db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
     if not paper:
+        if own_session:
+            db.close()
         return
     
     try:
+        print(f"================ PROCESSING PAPER {arxiv_id} ================")
+        # Update status
+        paper_processing_status[arxiv_id] = "Extracting content from PDF"
+        print(f"Status: {paper_processing_status[arxiv_id]}")
+        
         # Extract content from PDF
         pdf_content = pdf_processor.process_pdf(paper.pdf_data)
         
         # Store extracted text
         paper.extracted_text = pdf_content["text"]
+        print(f"Extracted text length: {len(paper.extracted_text)}")
         
         # Store extracted images as JSON
         # Ensure we're storing JSON as strings for SQLite compatibility
-        paper.extracted_images = json.dumps([img for img in pdf_content["images"]])
+        extracted_images = [img for img in pdf_content["images"]]
+        paper.extracted_images = json.dumps(extracted_images)
+        print(f"Extracted {len(extracted_images)} images")
+        
+        # Save initial extraction data to database
+        db.add(paper)
+        db.commit()
+        db.refresh(paper)
+        print("Saved extracted text and images to database")
+        
+        # Update status
+        paper_processing_status[arxiv_id] = "Extracting metadata"
+        print(f"Status: {paper_processing_status[arxiv_id]}")
         
         # Get text from first 4 pages for metadata extraction
         first_pages_text = pdf_processor.extract_text_from_first_pages(paper.pdf_data, num_pages=4)
         
         # Generate metadata using Flash LLM on first pages
+        print("Generating metadata using LLM...")
         metadata_json = llm_service.extract_paper_metadata_flash(first_pages_text)
         try:
             # Clean JSON response if it starts with ```json and ends with ```
@@ -196,6 +235,13 @@ def process_paper(arxiv_id: str, db: Session):
                 paper.abstract = metadata.get("abstract", "")
                 
             print(f"Successfully processed metadata: Title='{paper.title}', Authors='{paper.authors}'")
+            print(f"Abstract length: {len(paper.abstract) if paper.abstract else 0}")
+            
+            # Save metadata to database
+            db.add(paper)
+            db.commit()
+            db.refresh(paper)
+            print("Saved metadata to database")
             
         except json.JSONDecodeError as e:
             print(f"Error parsing metadata JSON: {metadata_json}")
@@ -222,28 +268,135 @@ def process_paper(arxiv_id: str, db: Session):
                     if abstract_match:
                         paper.abstract = abstract_match.group(1).strip()
                         print(f"Extracted abstract by regex: {paper.abstract[:100]}...")
+                        
+                # Save fallback metadata to database
+                db.add(paper)
+                db.commit()
+                db.refresh(paper)
+                print("Saved fallback metadata to database")
             except Exception as fallback_error:
                 print(f"Error in fallback metadata extraction: {str(fallback_error)}")
+        
+        # Update status
+        paper_processing_status[arxiv_id] = "Generating paper sections with LLM"
+        print(f"Status: {paper_processing_status[arxiv_id]}")
+        
+        # Generate sections data with Google LLM
+        try:
+            print(f"Generating sections for paper {arxiv_id}...")
+            sections_response = llm_service.generate_paper_sections(paper.extracted_text)
+            sections = sections_response
+            print(f"LLM generated {len(sections)} sections:")
+            for i, section in enumerate(sections):
+                print(f"  Section {i+1}: {section['title']}")
+                if 'subsections' in section and section['subsections']:
+                    for j, subsection in enumerate(section['subsections']):
+                        print(f"    Subsection {j+1}: {subsection['title']}")
+            
+            # Process each section to generate detailed content
+            section_count = len(sections)
+            for i, section in enumerate(sections):
+                # Update status with section progress
+                paper_processing_status[arxiv_id] = f"Generating content for section {i+1}/{section_count}: {section['title']}"
+                print(f"Status: {paper_processing_status[arxiv_id]}")
+                
+                # Generate detailed content for the main section
+                section_content_response = llm_service.generate_section_content(
+                    paper.extracted_text,
+                    section["title"],
+                    section["content"]
+                )
+                section["content"] = section_content_response
+                print(f"Generated content for section {section['title']} ({len(section['content'])} chars)")
+                
+                # Process subsections if they exist
+                if "subsections" in section and section["subsections"]:
+                    subsection_count = len(section["subsections"])
+                    for j, subsection in enumerate(section["subsections"]):
+                        # Update status with subsection progress
+                        paper_processing_status[arxiv_id] = f"Generating content for subsection {j+1}/{subsection_count} of {section['title']}"
+                        print(f"Status: {paper_processing_status[arxiv_id]}")
+                        
+                        subsection_content_response = llm_service.generate_section_content(
+                            paper.extracted_text,
+                            subsection["title"],
+                            subsection["content"]
+                        )
+                        subsection["content"] = subsection_content_response
+                        print(f"  Generated content for subsection {subsection['title']} ({len(subsection['content'])} chars)")
+            
+            # Store the sections data as JSON
+            paper.sections_data = json.dumps(sections)
+            print(f"Successfully generated {len(sections)} sections for paper {arxiv_id}")
+            
+            # Save sections data to database
+            db.add(paper)
+            db.commit()
+            db.refresh(paper)
+            print("Saved sections data to database")
+            
+        except Exception as sections_error:
+            print(f"Error generating sections: {str(sections_error)}")
+            # Create a basic structure in case of error
+            basic_sections = [
+                {
+                    "id": "overview",
+                    "title": "Overview",
+                    "content": paper.abstract or "Paper overview not available.",
+                    "subsections": []
+                }
+            ]
+            paper.sections_data = json.dumps(basic_sections)
+            # Save basic sections to database
+            db.add(paper)
+            db.commit()
+            db.refresh(paper)
+            print("Saved basic sections data to database")
+        
+        # Update status
+        paper_processing_status[arxiv_id] = "Creating folder structure"
+        print(f"Status: {paper_processing_status[arxiv_id]}")
         
         # Set the paper as processed
         paper.processed = True
         
         # Commit the changes to the database
+        db.add(paper)
         db.commit()
+        db.refresh(paper)
         print(f"Paper {arxiv_id} successfully processed and saved to database")
         
         # Verify data was saved
         db.refresh(paper)
-        print(f"Verification - Title: '{paper.title}', Authors: '{paper.authors}', Abstract length: {len(paper.abstract) if paper.abstract else 0}")
+        verification_data = {
+            "title": paper.title,
+            "authors": paper.authors,
+            "abstract_length": len(paper.abstract) if paper.abstract else 0,
+            "extracted_text_length": len(paper.extracted_text) if paper.extracted_text else 0,
+            "sections_data_length": len(paper.sections_data) if paper.sections_data else 0,
+            "processed": paper.processed
+        }
+        print(f"Verification - Paper data: {json.dumps(verification_data)}")
         
         # Create folder-based structure in Next.js frontend
         create_nextjs_folder_structure(paper)
         
+        # Clear status
+        if arxiv_id in paper_processing_status:
+            del paper_processing_status[arxiv_id]
+            
+        print(f"================ FINISHED PROCESSING PAPER {arxiv_id} ================")
         return paper
-    
     except Exception as e:
         print(f"Error processing paper: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        paper_processing_status[arxiv_id] = f"Error: {str(e)}"
         db.rollback()
+    finally:
+        # Close the session if we created it
+        if own_session:
+            db.close()
 
 def create_nextjs_folder_structure(paper):
     """
@@ -286,17 +439,34 @@ def create_nextjs_folder_structure(paper):
         with open(os.path.join(paper_folder, "README.md"), "w", encoding="utf-8") as f:
             f.write(readme_content)
         
-        # Create page.tsx
+        # Get sections data if available, or create a basic structure
+        try:
+            sections = json.loads(paper.sections_data) if paper.sections_data else []
+            if not sections:
+                sections = [
+                    {
+                        "id": "overview",
+                        "title": "Overview",
+                        "content": paper.abstract or "Paper overview not available.",
+                        "subsections": []
+                    }
+                ]
+        except (json.JSONDecodeError, TypeError):
+            sections = [
+                {
+                    "id": "overview",
+                    "title": "Overview",
+                    "content": paper.abstract or "Paper overview not available.",
+                    "subsections": []
+                }
+            ]
+        
+        # Create page.tsx with DeepWiki-like structure
         page_content = f"""'use client';
 
-import {{ useState }} from 'react';
-import {{ useRouter }} from 'next/navigation';
-import LoadingState from '../../../components/LoadingState';
+import {{ useState, useEffect, useRef }} from 'react';
 import Link from 'next/link';
-import {{ ArrowLeft, ExternalLink, FileText, Download }} from 'lucide-react';
-
-// Backend URL for images
-const BACKEND_URL = 'http://127.0.0.1:8000/api';
+import {{ ArrowLeft, ExternalLink, Download, ChevronRight }} from 'lucide-react';
 
 // Paper data
 const paperData = {{
@@ -306,134 +476,146 @@ const paperData = {{
   abstract: '{(paper.abstract or "").replace("'", "\\'")}',
 }};
 
+// Sections data
+const sectionsData = {json.dumps(sections)};
+
 export default function PaperPage() {{
-  const router = useRouter();
-  const [activeTab, setActiveTab] = useState('text');
+  const [activeSection, setActiveSection] = useState(sectionsData[0]?.id);
+  const [activeSubsection, setActiveSubsection] = useState(null);
+  const activeSectionRef = useRef(null);
   
-  // Truncate extracted text to 4000 characters
-  const extractedText = `{(paper.extracted_text or "No extracted text available").replace("`", "\\`")}`;
-  const truncatedText = extractedText.length > 4000 
-    ? extractedText.slice(0, 4000) + '...' 
-    : extractedText;
+  // Scroll to the active section when it changes
+  useEffect(() => {{
+    if (activeSectionRef.current) {{
+      activeSectionRef.current.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+    }}
+  }}, [activeSection, activeSubsection]);
+
+  // Find the active section content
+  const currentSection = sectionsData.find(section => section.id === activeSection);
+  const currentSubsection = activeSubsection
+    ? currentSection?.subsections?.find(sub => sub.id === activeSubsection)
+    : null;
+  
+  const contentToDisplay = currentSubsection
+    ? currentSubsection.content
+    : currentSection?.content;
 
   return (
-    <div className="pb-12">
-      {{/* Paper Header */}}
-      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 mb-8 py-6">
-        <div className="max-w-4xl mx-auto px-4">
-          <div className="mb-6">
-            <Link 
-              href="/" 
-              className="inline-flex items-center text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 mb-4"
-            >
-              <ArrowLeft className="w-4 h-4 mr-1" />
-              <span>Back to home</span>
-            </Link>
-            <h1 className="text-2xl sm:text-3xl font-bold leading-tight mb-4">{{paperData.title}}</h1>
-            
-            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-4">
-              <span className="inline-flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 px-2.5 py-0.5 rounded-full">
-                arXiv ID: {{paperData.arxiv_id}}
-              </span>
-              
-              <a 
-                href={{`https://arxiv.org/abs/${{paperData.arxiv_id}}`}}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400"
+    <div className="flex flex-row min-h-screen bg-gray-100 dark:bg-gray-900">
+      {{/* Left sidebar with sections */}}
+      <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 py-6 px-4 hidden md:block overflow-y-auto">
+        <Link 
+          href="/" 
+          className="inline-flex items-center text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 mb-6"
+        >
+          <ArrowLeft className="w-4 h-4 mr-1" />
+          <span>Back to papers</span>
+        </Link>
+
+        <h3 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium my-4">Sections</h3>
+        <nav className="space-y-1">
+          {{sectionsData.map(section => (
+            <div key={{section.id}} className="mb-3">
+              <button
+                onClick={{() => {{
+                  setActiveSection(section.id);
+                  setActiveSubsection(null);
+                }}}}
+                className={{`flex w-full items-center pl-2 py-1.5 text-sm font-medium rounded-md ${{
+                  activeSection === section.id && !activeSubsection
+                    ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-semibold'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                }}`}}
               >
-                <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                <span>View on arXiv</span>
-              </a>
+                {{section.title}}
+              </button>
               
-              <a 
-                href={{`https://arxiv.org/pdf/${{paperData.arxiv_id}}.pdf`}}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400"
-              >
-                <Download className="w-3.5 h-3.5 mr-1" />
-                <span>Download PDF</span>
-              </a>
+              {{/* Subsections */}}
+              {{section.subsections && section.subsections.length > 0 && (
+                <div className="pl-4 mt-1 space-y-1">
+                  {{section.subsections.map(subsection => (
+                    <button
+                      key={{subsection.id}}
+                      onClick={{() => {{
+                        setActiveSection(section.id);
+                        setActiveSubsection(subsection.id);
+                      }}}}
+                      className={{`flex w-full items-center pl-2 py-1 text-xs font-medium rounded-md ${{
+                        activeSection === section.id && activeSubsection === subsection.id
+                          ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                          : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                      }}`}}
+                    >
+                      <ChevronRight className="w-3 h-3 mr-1 opacity-70" />
+                      {{subsection.title}}
+                    </button>
+                  ))}}
+                </div>
+              )}}
             </div>
-          </div>
-          
-          {{paperData.authors && (
-            <div className="mb-4">
-              <h2 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-1">Authors</h2>
-              <p className="text-gray-800 dark:text-gray-200">{{paperData.authors}}</p>
-            </div>
-          )}}
-          
-          {{paperData.abstract && (
+          ))}}
+        </nav>
+      </div>
+
+      {{/* Main content */}}
+      <div className="flex-1 overflow-auto">
+        {{/* Paper header */}}
+        <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 py-6">
+          <div className="max-w-4xl mx-auto px-4">
             <div className="mb-6">
-              <h2 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-1">Abstract</h2>
-              <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 text-gray-800 dark:text-gray-200 text-sm leading-relaxed">
-                {{paperData.abstract}}
+              <h1 className="text-2xl sm:text-3xl font-bold leading-tight mb-4">{{paperData.title}}</h1>
+              
+              <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-4">
+                <span className="inline-flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 px-2.5 py-0.5 rounded-full">
+                  arXiv ID: {{paperData.arxiv_id}}
+                </span>
+                
+                <a 
+                  href={{`https://arxiv.org/abs/${{paperData.arxiv_id}}`}}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                  <span>View on arXiv</span>
+                </a>
+                
+                <a 
+                  href={{`https://arxiv.org/pdf/${{paperData.arxiv_id}}.pdf`}}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400"
+                >
+                  <Download className="w-3.5 h-3.5 mr-1" />
+                  <span>Download PDF</span>
+                </a>
               </div>
             </div>
-          )}}
-          
-          {{/* Tab Navigation */}}
-          <div className="border-b border-gray-200 dark:border-gray-700">
-            <nav className="flex -mb-px space-x-8">
-              <button
-                onClick={{() => setActiveTab('text')}}
-                className={{`py-2 flex items-center border-b-2 font-medium text-sm ${{
-                  activeTab === 'text' 
-                    ? 'border-blue-500 text-blue-600 dark:text-blue-400' 
-                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                }}`}}
-              >
-                <FileText className="w-4 h-4 mr-2" />
-                <span>Paper Text</span>
-              </button>
-              
-              <button
-                onClick={{() => setActiveTab('images')}}
-                className={{`py-2 flex items-center border-b-2 font-medium text-sm ${{
-                  activeTab === 'images' 
-                    ? 'border-blue-500 text-blue-600 dark:text-blue-400' 
-                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                }}`}}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={{2}} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <span>Figures & Images</span>
-              </button>
-            </nav>
+            
+            {{paperData.authors && (
+              <div className="mb-4">
+                <h2 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-1">Authors</h2>
+                <p className="text-gray-800 dark:text-gray-200">{{paperData.authors}}</p>
+              </div>
+            )}}
           </div>
         </div>
-      </div>
-      
-      <div className="max-w-4xl mx-auto px-4">
-        {{/* Extracted Text */}}
-        {{activeTab === 'text' && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-4">Extracted Text</h2>
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-              <pre className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200 font-mono leading-relaxed max-h-[800px] overflow-y-auto">
-                {{truncatedText}}
-              </pre>
-            </div>
-          </div>
-        )}}
         
-        {{/* Images */}}
-        {{activeTab === 'images' && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-4">Figures & Images</h2>
-            
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
-              <p className="text-gray-600 dark:text-gray-400">
-                <Link href={{`/api/images/${{paperData.arxiv_id}}`}} className="text-blue-500 hover:underline">
-                  View images for this paper
-                </Link>
+        {{/* Section content */}}
+        <div className="max-w-4xl mx-auto px-4 py-8" ref={{activeSectionRef}}>
+          <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-3">
+            {{currentSubsection ? currentSubsection.title : currentSection?.title}}
+          </h2>
+          
+          <div className="prose dark:prose-invert max-w-none">
+            {{contentToDisplay && contentToDisplay.split('\\n').map((paragraph, idx) => (
+              <p key={{idx}} className="mb-4 text-gray-700 dark:text-gray-300">
+                {{paragraph}}
               </p>
-            </div>
+            ))}}
           </div>
-        )}}
+        </div>
       </div>
     </div>
   );
@@ -472,6 +654,7 @@ async def get_paper(arxiv_id: str, db: Session = Depends(get_db)):
         pdf_url=paper.pdf_url,
         extracted_text=paper.extracted_text,
         images=images,
+        sections=json.loads(paper.sections_data) if paper.sections_data else None,
         processed=paper.processed,
         created_at=paper.created_at,
         updated_at=paper.updated_at
@@ -480,16 +663,22 @@ async def get_paper(arxiv_id: str, db: Session = Depends(get_db)):
 @app.get("/api/papers")
 async def list_papers(db: Session = Depends(get_db)):
     """List all processed papers."""
-    papers = db.query(Paper).filter(Paper.processed == True).all()
-    return [
-        {
+    papers = db.query(Paper).all()  # Get all papers, not just processed ones
+    print(f"Found {len(papers)} papers in database")
+    
+    response_data = []
+    for paper in papers:
+        paper_data = {
             "arxiv_id": paper.arxiv_id,
-            "title": paper.title,
-            "authors": paper.authors,
-            "abstract": paper.abstract[:200] + "..." if paper.abstract and len(paper.abstract) > 200 else paper.abstract
+            "title": paper.title or f"Paper {paper.arxiv_id}",
+            "authors": paper.authors or "Unknown authors",
+            "abstract": paper.abstract[:200] + "..." if paper.abstract and len(paper.abstract) > 200 else paper.abstract or "No abstract available",
+            "processed": paper.processed
         }
-        for paper in papers
-    ]
+        response_data.append(paper_data)
+        print(f"Paper {paper.arxiv_id}: {paper_data['title']} - Processed: {paper.processed}")
+    
+    return response_data
 
 @app.get("/api/images/{arxiv_id}")
 async def get_paper_images(arxiv_id: str, db: Session = Depends(get_db)):
@@ -547,6 +736,26 @@ async def get_image(image_id: str, db: Session = Depends(get_db)):
 def health_check():
     """Health check endpoint for the frontend to verify backend is running."""
     return {"status": "ok", "service": "DeepRxiv API", "version": "1.0.0"}
+
+@app.get("/api/paper/{arxiv_id}/status", response_model=PaperStatusResponse)
+async def get_paper_status(arxiv_id: str, db: Session = Depends(get_db)):
+    """Get the processing status of a paper."""
+    paper = db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    
+    if paper.processed:
+        progress = "Completed"
+    elif arxiv_id in paper_processing_status:
+        progress = paper_processing_status[arxiv_id]
+    else:
+        progress = "Processing"
+    
+    return PaperStatusResponse(
+        arxiv_id=paper.arxiv_id,
+        processed=paper.processed,
+        progress=progress
+    )
 
 if __name__ == "__main__":
     import uvicorn
