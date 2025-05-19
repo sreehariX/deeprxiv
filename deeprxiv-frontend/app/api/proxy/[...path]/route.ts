@@ -5,11 +5,11 @@ const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
 export async function GET(
   request: NextRequest,
-  context: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
   try {
-    // Properly await params in the App Router
-    const path = context.params.path;
+    // Properly await params before accessing its properties
+    const { path } = await context.params;
     const pathString = Array.isArray(path) ? path.join('/') : '';
     const url = `${API_BASE_URL}/${pathString}`;
 
@@ -55,11 +55,11 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  context: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
   try {
-    // Properly await params in the App Router
-    const path = context.params.path;
+    // Properly await params before accessing its properties
+    const { path } = await context.params;
     const pathString = Array.isArray(path) ? path.join('/') : '';
     const url = `${API_BASE_URL}/${pathString}`;
     
