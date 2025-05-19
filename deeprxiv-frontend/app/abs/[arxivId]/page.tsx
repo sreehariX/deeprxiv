@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { getPaperDetails, getPaperImages, PaperDetail, Image } from '../../../utils/api';
 import LoadingState from '../../../components/LoadingState';
 import Link from 'next/link';
@@ -10,8 +10,8 @@ import { ArrowLeft, ExternalLink, FileText, AlertCircle, Download } from 'lucide
 // Backend URL for images
 const BACKEND_URL = 'http://127.0.0.1:8000/api';
 
-export default function PaperPage() {
-  const { arxivId } = useParams();
+export default function PaperPage({ params }: { params: { arxivId: string } }) {
+  const { arxivId } = params;
   const router = useRouter();
   const [paper, setPaper] = useState<PaperDetail | null>(null);
   const [images, setImages] = useState<Image[]>([]);

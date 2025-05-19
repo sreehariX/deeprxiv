@@ -12,6 +12,10 @@ from io import BytesIO
 import sqlite3
 import sqlalchemy
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv('.env.local')
 
 from database import get_db, Paper, create_tables
 from pdf_processor import PDFProcessor
@@ -40,6 +44,13 @@ llm_service = LLMService()
 
 # Create database tables
 create_tables()
+
+# Path to frontend directory - use absolute path (replace with actual path)
+# Get current directory and navigate to frontend
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+FRONTEND_PATH = os.path.join(parent_dir, "deeprxiv-frontend")
+print(f"Frontend path is set to: {FRONTEND_PATH}")
 
 # Pydantic models for request/response
 class ArxivURLRequest(BaseModel):
@@ -225,11 +236,215 @@ def process_paper(arxiv_id: str, db: Session):
         db.refresh(paper)
         print(f"Verification - Title: '{paper.title}', Authors: '{paper.authors}', Abstract length: {len(paper.abstract) if paper.abstract else 0}")
         
+        # Create folder-based structure in Next.js frontend
+        create_nextjs_folder_structure(paper)
+        
         return paper
     
     except Exception as e:
         print(f"Error processing paper: {str(e)}")
         db.rollback()
+
+def create_nextjs_folder_structure(paper):
+    """
+    Create a folder structure in the Next.js frontend for the paper.
+    This creates:
+    - /app/abs/{arxiv_id}/ folder
+    - README.md with paper metadata
+    - page.tsx file for the paper
+    """
+    try:
+        # Define the path to the frontend app and paper folder
+        if not os.path.exists(FRONTEND_PATH):
+            print(f"Frontend path not found: {FRONTEND_PATH}")
+            return
+        
+        paper_folder = os.path.join(FRONTEND_PATH, "app", "abs", paper.arxiv_id)
+        
+        # Create folder if it doesn't exist
+        os.makedirs(paper_folder, exist_ok=True)
+        
+        # Create README.md
+        readme_content = f"""# {paper.title or 'Untitled Paper'}
+
+## arXiv ID
+{paper.arxiv_id}
+
+## Authors
+{paper.authors or 'No authors listed'}
+
+## Abstract
+{paper.abstract or 'No abstract available'}
+
+## Links
+- [View on arXiv](https://arxiv.org/abs/{paper.arxiv_id})
+- [Download PDF](https://arxiv.org/pdf/{paper.arxiv_id}.pdf)
+
+## Extracted Text
+{paper.extracted_text[:1000] + '...' if paper.extracted_text and len(paper.extracted_text) > 1000 else paper.extracted_text or 'No extracted text available'}
+"""
+        with open(os.path.join(paper_folder, "README.md"), "w", encoding="utf-8") as f:
+            f.write(readme_content)
+        
+        # Create page.tsx
+        page_content = f"""'use client';
+
+import {{ useState }} from 'react';
+import {{ useRouter }} from 'next/navigation';
+import LoadingState from '../../../components/LoadingState';
+import Link from 'next/link';
+import {{ ArrowLeft, ExternalLink, FileText, Download }} from 'lucide-react';
+
+// Backend URL for images
+const BACKEND_URL = 'http://127.0.0.1:8000/api';
+
+// Paper data
+const paperData = {{
+  arxiv_id: '{paper.arxiv_id}',
+  title: '{(paper.title or "Untitled Paper").replace("'", "\\'")}',
+  authors: '{(paper.authors or "").replace("'", "\\'")}',
+  abstract: '{(paper.abstract or "").replace("'", "\\'")}',
+}};
+
+export default function PaperPage() {{
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState('text');
+  
+  // Truncate extracted text to 4000 characters
+  const extractedText = `{(paper.extracted_text or "No extracted text available").replace("`", "\\`")}`;
+  const truncatedText = extractedText.length > 4000 
+    ? extractedText.slice(0, 4000) + '...' 
+    : extractedText;
+
+  return (
+    <div className="pb-12">
+      {{/* Paper Header */}}
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 mb-8 py-6">
+        <div className="max-w-4xl mx-auto px-4">
+          <div className="mb-6">
+            <Link 
+              href="/" 
+              className="inline-flex items-center text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 mb-4"
+            >
+              <ArrowLeft className="w-4 h-4 mr-1" />
+              <span>Back to home</span>
+            </Link>
+            <h1 className="text-2xl sm:text-3xl font-bold leading-tight mb-4">{{paperData.title}}</h1>
+            
+            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-4">
+              <span className="inline-flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 px-2.5 py-0.5 rounded-full">
+                arXiv ID: {{paperData.arxiv_id}}
+              </span>
+              
+              <a 
+                href={{`https://arxiv.org/abs/${{paperData.arxiv_id}}`}}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400"
+              >
+                <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                <span>View on arXiv</span>
+              </a>
+              
+              <a 
+                href={{`https://arxiv.org/pdf/${{paperData.arxiv_id}}.pdf`}}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400"
+              >
+                <Download className="w-3.5 h-3.5 mr-1" />
+                <span>Download PDF</span>
+              </a>
+            </div>
+          </div>
+          
+          {{paperData.authors && (
+            <div className="mb-4">
+              <h2 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-1">Authors</h2>
+              <p className="text-gray-800 dark:text-gray-200">{{paperData.authors}}</p>
+            </div>
+          )}}
+          
+          {{paperData.abstract && (
+            <div className="mb-6">
+              <h2 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-1">Abstract</h2>
+              <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 text-gray-800 dark:text-gray-200 text-sm leading-relaxed">
+                {{paperData.abstract}}
+              </div>
+            </div>
+          )}}
+          
+          {{/* Tab Navigation */}}
+          <div className="border-b border-gray-200 dark:border-gray-700">
+            <nav className="flex -mb-px space-x-8">
+              <button
+                onClick={{() => setActiveTab('text')}}
+                className={{`py-2 flex items-center border-b-2 font-medium text-sm ${{
+                  activeTab === 'text' 
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400' 
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                }}`}}
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                <span>Paper Text</span>
+              </button>
+              
+              <button
+                onClick={{() => setActiveTab('images')}}
+                className={{`py-2 flex items-center border-b-2 font-medium text-sm ${{
+                  activeTab === 'images' 
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400' 
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                }}`}}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={{2}} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <span>Figures & Images</span>
+              </button>
+            </nav>
+          </div>
+        </div>
+      </div>
+      
+      <div className="max-w-4xl mx-auto px-4">
+        {{/* Extracted Text */}}
+        {{activeTab === 'text' && (
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-4">Extracted Text</h2>
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+              <pre className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200 font-mono leading-relaxed max-h-[800px] overflow-y-auto">
+                {{truncatedText}}
+              </pre>
+            </div>
+          </div>
+        )}}
+        
+        {{/* Images */}}
+        {{activeTab === 'images' && (
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-4">Figures & Images</h2>
+            
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
+              <p className="text-gray-600 dark:text-gray-400">
+                <Link href={{`/api/images/${{paperData.arxiv_id}}`}} className="text-blue-500 hover:underline">
+                  View images for this paper
+                </Link>
+              </p>
+            </div>
+          </div>
+        )}}
+      </div>
+    </div>
+  );
+}}
+"""
+        with open(os.path.join(paper_folder, "page.tsx"), "w", encoding="utf-8") as f:
+            f.write(page_content)
+        
+        print(f"Successfully created Next.js folder structure for paper {paper.arxiv_id}")
+    except Exception as e:
+        print(f"Error creating Next.js folder structure for paper {paper.arxiv_id}: {str(e)}")
 
 @app.get("/api/paper/{arxiv_id}", response_model=PaperDetailResponse)
 async def get_paper(arxiv_id: str, db: Session = Depends(get_db)):
