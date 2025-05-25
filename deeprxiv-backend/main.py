@@ -585,12 +585,23 @@ def create_nextjs_folder_structure(paper):
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Image as ImageIcon, ExternalLink, X, Play } from 'lucide-react';
-import 'katex/dist/katex.min.css';
+import { ArrowLeft, Image as ImageIcon, ExternalLink, X, Play, FileText, BookOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+
+// Custom CSS for hiding scrollbars
+const customStyles = `
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+    scrollbar-width: none;  /* Firefox */
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Safari and Chrome */
+  }
+`;
 
 // Types for better TypeScript support
 interface ImageData {
@@ -654,17 +665,48 @@ const getYouTubeVideoId = (url: string): string | null => {
   return match ? match[1] : null;
 };
 
+// Markdown component with math support
+const MarkdownContent = ({ content }: { content: string }) => {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+      className="prose prose-lg max-w-none text-gray-700 leading-relaxed"
+      components={{
+        // Custom styling for different elements
+        h1: ({ children }) => <h1 className="text-3xl font-bold text-gray-800 mb-4">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-2xl font-semibold text-gray-800 mb-3">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-xl font-medium text-gray-800 mb-2">{children}</h3>,
+        p: ({ children }) => <p className="text-gray-700 mb-4 leading-relaxed">{children}</p>,
+        ul: ({ children }) => <ul className="list-disc list-inside mb-4 text-gray-700">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal list-inside mb-4 text-gray-700">{children}</ol>,
+        li: ({ children }) => <li className="mb-1">{children}</li>,
+        blockquote: ({ children }) => <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-600 mb-4">{children}</blockquote>,
+        code: ({ children, className }) => {
+          const isInline = !className;
+          if (isInline) {
+            return <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">{children}</code>;
+          }
+          return <pre className="bg-gray-100 p-4 rounded-lg overflow-x-auto mb-4"><code className="text-sm font-mono">{children}</code></pre>;
+        },
+        a: ({ children, href }) => <a href={href} className="text-blue-600 hover:text-blue-800 underline" target="_blank" rel="noopener noreferrer">{children}</a>,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+};
+
 export default function PaperPage() {
   const [activeContent, setActiveContent] = useState('');
-  const [activeTab, setActiveTab] = useState<'images' | 'sources'>('sources');
   const [imagesData, setImagesData] = useState<ImageData[]>([]);
   const [imagesLoading, setImagesLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState<ImageData | null>(null);
+  const [selectedPdfPage, setSelectedPdfPage] = useState<number | null>(null);
   const [youtubeModal, setYoutubeModal] = useState<{ isOpen: boolean; videoId: string | null }>({
     isOpen: false,
     videoId: null
   });
-  
   // Fetch images from API
   useEffect(() => {
     const fetchImages = async () => {
@@ -674,10 +716,6 @@ export default function PaperPage() {
         if (response.ok) {
           const images = await response.json();
           setImagesData(images);
-          // If images are available, switch to images tab
-          if (images && images.length > 0) {
-            setActiveTab('images');
-          }
         } else {
           console.error('Failed to fetch images:', response.statusText);
           setImagesData([]);
@@ -750,12 +788,21 @@ export default function PaperPage() {
     window.open(citation, '_blank', 'noopener,noreferrer');
   };
 
+  // Handle PDF page view - open in new tab
+  const handlePdfPageView = (pageNumber: number) => {
+    const pdfUrl = `https://arxiv.org/pdf/${paperData.arxiv_id}.pdf#page=${pageNumber}`;
+    window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+  };
+
+
+
   return (
     <div className="min-h-screen flex flex-col bg-white">
+      <style jsx global>{customStyles}</style>
       {/* Header */}
-      <header className="bg-white sticky top-0 z-50 border-b border-gray-200">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+      <header className="bg-white sticky top-0 z-50">
+        <div className="max-w-full mx-auto px-4">
+          <div className="flex items-center h-16" style={{paddingLeft: '96px'}}>
             <div className="flex items-center space-x-3">
               <Link href="/" className="flex items-center text-blue-600 hover:text-blue-700">
                 <ArrowLeft className="w-6 h-6" />
@@ -770,253 +817,209 @@ export default function PaperPage() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-grow container mx-auto px-0 py-0">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-x-0 min-h-screen">
-          {/* Left Sidebar - Navigation with All Subsections Visible */}
-          <aside className="lg:col-span-1 bg-white p-6 border-r border-gray-200">
-            <div className="sticky top-20">
-              <nav className="space-y-2">
-                {sectionsData?.map((section) => (
+      <main className="flex-grow">
+        <div className="max-w-full mx-auto px-4">
+          <div className="flex min-h-screen">
+            {/* Left Sidebar - Navigation */}
+            <aside className="w-72 bg-white flex-shrink-0 fixed left-24 top-16 bottom-0 overflow-y-auto scrollbar-hide">
+              <div className="p-6">
+                <nav className="space-y-1">
+              {sectionsData?.map((section) => (
                   <div key={section.id} className="space-y-1">
                     {/* Main Section */}
-                    <button
+                <button
                       onClick={() => setActiveContent(section.id)}
-                      className={`block w-full text-left px-4 py-3 rounded-md transition-colors text-sm font-medium ${
+                      className={`block w-full text-left px-1 py-3 rounded-md transition-colors text-sm font-medium ${
                         activeContent === section.id
                           ? 'bg-blue-50 text-blue-700'
-                          : 'text-gray-700 hover:bg-gray-100'
-                      }`}
-                    >
+                      : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
                       <div className="truncate" title={section.title}>
-                        {section.title}
+                  {section.title}
                       </div>
                     </button>
                     
-                    {/* All Subsections - Always Visible */}
+                    {/* All Subsections */}
                     {section.subsections && section.subsections.length > 0 && (
-                      <div className="ml-4 space-y-1">
+                      <div className="ml-8 space-y-1">
                         {section.subsections.map((subsection) => (
                           <button
                             key={subsection.id}
                             onClick={() => setActiveContent(subsection.id)}
-                            className={`block w-full text-left px-3 py-2 rounded-md text-sm transition-colors border-l-2 ${
+                            className={`block w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
                               activeContent === subsection.id
-                                ? 'border-blue-400 bg-blue-25 text-blue-600'
-                                : 'border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300'
+                                ? 'bg-blue-25 text-blue-600'
+                                : 'text-gray-600 hover:bg-gray-50'
                             }`}
                           >
                             <div className="truncate" title={subsection.title}>
                               {subsection.title}
                             </div>
-                          </button>
+                </button>
                         ))}
                       </div>
                     )}
                   </div>
-                ))}
-              </nav>
+                              ))}
+                </nav>
+              </div>
+            </aside>
+
+            {/* Center Content Area */}
+            <div className="flex-1 bg-white px-6 py-6 overflow-y-auto" style={{marginLeft: '384px', marginRight: '480px'}}>
+              {currentContent && (
+                <>
+                  <h3 className="text-2xl font-semibold text-gray-800 mb-6">
+                    {currentContent.content.title}
+                  </h3>
+                  
+                  {/* Content - Proper Markdown rendering */}
+                  <MarkdownContent content={currentContent.content.content} />
+                </>
+              )}
             </div>
-          </aside>
 
-          {/* Center Content Area */}
-          <div className="lg:col-span-3 bg-white p-6">
-            {currentContent && (
-              <>
-                <h3 className="text-2xl font-semibold text-gray-800 mb-2">
-                  {currentContent.content.title}
-                </h3>
-                <p className="text-sm text-gray-500 mb-6">
-                  arXiv:{paperData.arxiv_id} • {paperData.authors}
-                  {currentContent.content.page_number && (
-                    <span> • Page {currentContent.content.page_number}</span>
-                  )}
-                </p>
-                
-                {/* Content - Same formatting for sections and subsections */}
-                <div className="prose prose-lg max-w-none text-gray-700 leading-relaxed">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkMath]}
-                    rehypePlugins={[rehypeKatex]}
-                    className="prose prose-gray max-w-none"
-                    components={{
-                      // Enhanced LaTeX and content rendering
-                      p: ({ children }) => <p className="mb-4 leading-relaxed">{children}</p>,
-                      h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 text-gray-900">{children}</h1>,
-                      h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 text-gray-800">{children}</h2>,
-                      h3: ({ children }) => <h3 className="text-lg font-medium mb-2 text-gray-700">{children}</h3>,
-                      h4: ({ children }) => <h4 className="text-base font-medium mb-2 text-gray-700">{children}</h4>,
-                      h5: ({ children }) => <h5 className="text-sm font-medium mb-2 text-gray-700">{children}</h5>,
-                      h6: ({ children }) => <h6 className="text-sm font-medium mb-2 text-gray-700">{children}</h6>,
-                      code: ({ inline, children }) => 
-                        inline ? (
-                          <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">
-                            {children}
-                          </code>
-                        ) : (
-                          <pre className="bg-gray-50 p-4 rounded-lg overflow-x-auto my-4">
-                            <code className="text-sm font-mono text-gray-800">{children}</code>
-                          </pre>
-                        ),
-                      blockquote: ({ children }) => (
-                        <blockquote className="border-l-4 border-gray-300 pl-4 italic my-4">
-                          {children}
-                        </blockquote>
-                      ),
-                      ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-1">{children}</ul>,
-                      ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-1">{children}</ol>,
-                      li: ({ children }) => <li className="mb-1">{children}</li>,
-                      table: ({ children }) => (
-                        <div className="overflow-x-auto my-4">
-                          <table className="min-w-full border border-gray-300">{children}</table>
+            {/* Right Sidebar - PDF, Images, and Sources */}
+            <aside className="w-96 bg-white flex-shrink-0 fixed right-24 top-16 bottom-0 overflow-y-auto scrollbar-hide">
+              <div className="p-6 space-y-6">
+              
+              {/* PDF Section */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                  <FileText className="w-4 h-4 mr-2" />
+                  PDF Original
+                </h4>
+                {currentContent?.content?.page_number ? (
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => handlePdfPageView(currentContent.content.page_number!)}
+                      className="w-full bg-blue-50 p-3 rounded-lg hover:bg-blue-100 transition-colors text-left"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <FileText className="w-4 h-4 text-blue-600" />
+                        <div>
+                          <p className="text-sm font-medium text-blue-700">
+                            Page {currentContent.content.page_number}
+                          </p>
+                          <p className="text-xs text-blue-600">
+                            Click to view full page
+                          </p>
                         </div>
-                      ),
-                      th: ({ children }) => (
-                        <th className="border border-gray-300 px-4 py-2 bg-gray-100 font-semibold text-left">
-                          {children}
-                        </th>
-                      ),
-                      td: ({ children }) => (
-                        <td className="border border-gray-300 px-4 py-2">{children}</td>
-                      ),
-                      // Enhanced math rendering
-                      div: ({ className, children }) => {
-                        if (className?.includes('math')) {
-                          return <div className={`${className} my-4 text-center`}>{children}</div>;
-                        }
-                        return <div className={className}>{children}</div>;
-                      },
-                      span: ({ className, children }) => {
-                        if (className?.includes('math')) {
-                          return <span className={`${className} mx-1`}>{children}</span>;
-                        }
-                        return <span className={className}>{children}</span>;
-                      }
-                    }}
-                  >
-                    {currentContent.content.content}
-                  </ReactMarkdown>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Right Sidebar - Images and Sources */}
-          <aside className="lg:col-span-1 bg-white p-6 border-l border-gray-200">
-            <div className="sticky top-20">
-              {/* Tab Buttons */}
-              <div className="flex mb-4 border-b border-gray-200">
-                <button
-                  onClick={() => setActiveTab('images')}
-                  className={`flex-1 py-2 px-4 text-center font-medium transition-colors border-b-2 ${
-                    activeTab === 'images'
-                      ? 'text-blue-700 border-blue-700 font-semibold'
-                      : 'text-gray-600 border-transparent hover:text-gray-800'
-                  }`}
-                >
-                  <ImageIcon className="inline-block w-4 h-4 mr-1" />
-                  Images
-                </button>
-                <button
-                  onClick={() => setActiveTab('sources')}
-                  className={`flex-1 py-2 px-4 text-center font-medium transition-colors border-b-2 ${
-                    activeTab === 'sources'
-                      ? 'text-blue-700 border-blue-700 font-semibold'
-                      : 'text-gray-600 border-transparent hover:text-gray-800'
-                  }`}
-                >
-                  <ExternalLink className="inline-block w-4 h-4 mr-1" />
-                  Sources
-                </button>
+                      </div>
+                    </button>
+                    <div className="p-3 bg-gray-50 rounded-lg">
+                      <p className="text-xs text-gray-600 mb-2">
+                        <strong>PDF Reference:</strong>
+                      </p>
+                      <p className="text-xs text-gray-700">
+                        This content is sourced from page {currentContent.content.page_number} of the original PDF. 
+                        Click above to view the full page with figures, tables, and original formatting.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-4">
+                    <FileText className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                    <p className="text-xs text-gray-500 mb-2">No page reference available</p>
+                    <button
+                      onClick={() => window.open(`https://arxiv.org/pdf/${paperData.arxiv_id}.pdf`, '_blank', 'noopener,noreferrer')}
+                      className="px-3 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      View Full PDF
+                    </button>
+                  </div>
+                )}
               </div>
 
-              {/* Images Tab Content */}
-              {activeTab === 'images' && (
-                <div>
-                  <p className="text-sm text-gray-600 mb-4">
-                    Figures and tables related to the current content.
+              {/* Images Section */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                  <ImageIcon className="w-4 h-4 mr-2" />
+                  Images
+                </h4>
+                {imagesLoading ? (
+                  <div className="text-center py-4">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+                    <p className="text-xs text-gray-500 mt-2">Loading images...</p>
+                  </div>
+                ) : relevantImages.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    {relevantImages.map((image, index) => (
+                      <div
+                        key={image.id || index}
+                        className="aspect-square bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer hover:bg-gray-300 transition-colors overflow-hidden group"
+                        onClick={() => setSelectedImage(image)}
+                      >
+                        <img
+                          src={image.url || `/api/image/${image.id}`}
+                          alt={`Figure ${index + 1}`}
+                          className="max-w-full max-h-full object-contain p-1 group-hover:scale-105 transition-transform"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-4">
+                    <ImageIcon className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                    <p className="text-xs text-gray-500">No images for this content</p>
+                  </div>
+                )}
+                {relevantImages.length > 0 && (
+                  <p className="text-xs text-gray-500 mt-2 text-center">
+                    Click on an image to enlarge.
                   </p>
-                  {imagesLoading ? (
-                    <div className="text-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                      <p className="text-sm text-gray-500 mt-2">Loading images...</p>
-                    </div>
-                  ) : relevantImages.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-4">
-                      {relevantImages.map((image, index) => (
-                        <div
-                          key={image.id || index}
-                          className="aspect-square bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer hover:bg-gray-300 transition-colors overflow-hidden group"
-                          onClick={() => setSelectedImage(image)}
-                        >
-                          <img
-                            src={image.url || `/api/image/${image.id}`}
-                            alt={`Figure ${index + 1}`}
-                            className="max-w-full max-h-full object-contain p-2 group-hover:scale-105 transition-transform"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                      <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                      <p className="text-sm text-gray-500">No images for this content</p>
-                    </div>
-                  )}
-                  {relevantImages.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-2 text-center">
-                      Click on an image to enlarge.
-                    </p>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
 
-              {/* Sources Tab Content */}
-              {activeTab === 'sources' && (
-                <div>
-                  <p className="text-sm text-gray-600 mb-4">
-                    Citations and references mentioned in this content.
-                  </p>
-                  {contentCitations.length > 0 ? (
-                    <div className="space-y-3">
-                      {contentCitations.map((citation, index) => (
-                        <div
-                          key={index}
-                          className="bg-gray-50 p-3 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
-                        >
-                          <div className="flex items-start space-x-2">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-gray-800 mb-1">
-                                Reference {index + 1}
-                              </p>
-                              <p className="text-xs text-gray-600 break-words">
-                                {citation}
-                              </p>
-                              <button
-                                onClick={() => handleCitationClick(citation)}
-                                className="inline-flex items-center text-xs text-blue-600 hover:text-blue-800 hover:underline mt-2"
-                              >
-                                {isYouTubeUrl(citation) ? (
-                                  <Play className="w-3 h-3 mr-1" />
-                                ) : (
-                                  <ExternalLink className="w-3 h-3 mr-1" />
-                                )}
-                                {isYouTubeUrl(citation) ? 'Watch Video' : 'View Source'}
-                              </button>
-                            </div>
+              {/* Sources Section */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  Sources
+                </h4>
+                {contentCitations.length > 0 ? (
+                  <div className="space-y-2">
+                    {contentCitations.map((citation, index) => (
+                      <div
+                        key={index}
+                        className="bg-gray-50 p-3 rounded-lg hover:bg-gray-100 transition-colors"
+                      >
+                        <div className="flex items-start space-x-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-800 mb-1">
+                              Reference {index + 1}
+                            </p>
+                            <p className="text-xs text-gray-600 break-words">
+                              {citation}
+                            </p>
+                            <button
+                              onClick={() => handleCitationClick(citation)}
+                              className="inline-flex items-center text-xs text-blue-600 hover:text-blue-800 hover:underline mt-2"
+                            >
+                              {isYouTubeUrl(citation) ? (
+                                <Play className="w-3 h-3 mr-1" />
+                              ) : (
+                                <ExternalLink className="w-3 h-3 mr-1" />
+                              )}
+                              {isYouTubeUrl(citation) ? 'Watch Video' : 'View Source'}
+                            </button>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                      <ExternalLink className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                      <p className="text-sm text-gray-500">No citations for this content</p>
-                    </div>
-                  )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-4">
+                    <ExternalLink className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                    <p className="text-xs text-gray-500">No citations for this content</p>
+                  </div>
+                )}
                 </div>
-              )}
-            </div>
-          </aside>
+                
+              </div>
+            </aside>
+          </div>
         </div>
       </main>
 

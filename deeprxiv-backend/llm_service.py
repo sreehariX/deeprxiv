@@ -149,9 +149,18 @@ class LLMService:
         3. Focus on educational value over strict paper structure adherence
         4. Use clear, descriptive titles that indicate what readers will learn
         5. Include specific page references and figure/table mentions
-        6. Use proper markdown with LaTeX math notation
+        6. Use proper markdown with LaTeX math notation (KaTeX compatible only)
         7. Make content accessible while maintaining technical accuracy
         8. Connect concepts to broader research context
+        
+        LATEX REQUIREMENTS (KATEX ONLY):
+        - Use single $ for inline math: $E = mc^2$
+        - Use double $$ for display equations: $$\\frac{a}{b} = c$$
+        - ONLY use KaTeX-supported functions: \\frac{}{}, \\sum_{}, \\int_{}, \\alpha, \\beta, \\gamma, etc.
+        - For matrices: $$\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$$
+        - For aligned equations: $$\\begin{align} x &= y \\\\ a &= b \\end{align}$$
+        - NEVER use unsupported LaTeX packages or commands
+        - Test all mathematical expressions for KaTeX compatibility
         
         SECTION ORGANIZATION STRATEGY:
         - Start with foundational concepts and motivation
@@ -393,6 +402,24 @@ class LLMService:
         - Add page number citations throughout
         - Use clear paragraph structure with logical flow
         
+        LATEX FORMATTING GUIDELINES (CRITICAL - KATEX ONLY):
+        - Use single $ for inline math: $E = mc^2$
+        - Use double $$ for display equations: $$\\int_0^\\infty e^{-x} dx = 1$$
+        - Use ONLY KaTeX-supported functions and commands
+        - For fractions: $\\frac{a}{b}$
+        - For summations: $\\sum_{i=1}^n$
+        - For integrals: $\\int_a^b$
+        - For Greek letters: $\\alpha$, $\\beta$, $\\gamma$, $\\delta$, $\\epsilon$, $\\theta$, $\\lambda$, $\\mu$, $\\pi$, $\\sigma$, $\\phi$, $\\omega$
+        - For operators: $\\cdot$, $\\times$, $\\div$, $\\pm$, $\\mp$
+        - For relations: $\\leq$, $\\geq$, $\\neq$, $\\approx$, $\\equiv$
+        - For arrows: $\\rightarrow$, $\\leftarrow$, $\\leftrightarrow$
+        - For sets: $\\in$, $\\subset$, $\\cup$, $\\cap$, $\\emptyset$
+        - For calculus: $\\partial$, $\\nabla$, $\\infty$, $\\lim$
+        - For matrices: $$\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$$
+        - For aligned equations: $$\\begin{align} x &= y + z \\\\ a &= b + c \\end{align}$$
+        - NEVER use unsupported LaTeX packages or commands
+        - Test all math expressions for KaTeX compatibility
+        
         EDUCATIONAL QUALITY STANDARDS:
         - Explain technical terms when first introduced
         - Provide intuitive explanations before diving into details
@@ -441,6 +468,23 @@ class LLMService:
         - Include code blocks for algorithms or important equations
         - Explain any technical jargon or domain-specific terms
         - Make connections to other sections when relevant
+        
+        MATHEMATICAL CONTENT REQUIREMENTS:
+        - Convert ALL mathematical expressions to proper KaTeX-compatible LaTeX format
+        - Use inline math $...$ for variables and simple expressions
+        - Use display math $$...$$ for complex equations and formulas
+        - Ensure proper escaping of LaTeX commands (\\alpha, \\beta, etc.)
+        - Include mathematical derivations where relevant
+        - Explain the meaning of mathematical symbols and variables
+        - Show step-by-step mathematical reasoning when applicable
+        - Test all LaTeX expressions for KaTeX compatibility
+        - Use only KaTeX-supported functions and environments
+        - Avoid deprecated or unsupported LaTeX commands
+        - Use proper spacing and formatting for mathematical expressions
+        - Include units and dimensions where appropriate using \\text{...}
+        - Use \\operatorname{...} for custom function names
+        - Ensure all Greek letters use proper LaTeX commands
+        - Use standard mathematical notation conventions
         
         EXAMPLE STRUCTURE:
         ```markdown
