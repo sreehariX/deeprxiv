@@ -585,7 +585,7 @@ def create_nextjs_folder_structure(paper):
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Image as ImageIcon, ExternalLink, BookOpen, Clock, X, Play, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, ExternalLink, X, Play } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -655,8 +655,7 @@ const getYouTubeVideoId = (url: string): string | null => {
 };
 
 export default function PaperPage() {
-  const [activeSection, setActiveSection] = useState('');
-  const [activeSubsection, setActiveSubsection] = useState('');
+  const [activeContent, setActiveContent] = useState('');
   const [activeTab, setActiveTab] = useState<'images' | 'sources'>('sources');
   const [imagesData, setImagesData] = useState<ImageData[]>([]);
   const [imagesLoading, setImagesLoading] = useState(true);
@@ -697,39 +696,46 @@ export default function PaperPage() {
   // Initialize with the first section
   useEffect(() => {
     if (sectionsData?.length > 0) {
-      setActiveSection(sectionsData[0].id);
+      setActiveContent(sectionsData[0].id);
     }
   }, []);
   
-  // Get current section and subsection
-  const currentSection = sectionsData?.find(section => section.id === activeSection);
-  const currentSubsection = currentSection?.subsections?.find(sub => sub.id === activeSubsection);
-  
-  // Handle section/subsection navigation
-  const handleSectionClick = (sectionId: string) => {
-    setActiveSection(sectionId);
-    setActiveSubsection(''); // Clear subsection when switching sections
+  // Get current content (section or subsection)
+  const getCurrentContent = () => {
+    // First check if it's a main section
+    const section = sectionsData?.find(section => section.id === activeContent);
+    if (section) {
+      return { type: 'section', content: section };
+    }
+    
+    // Then check if it's a subsection
+    for (const section of sectionsData || []) {
+      const subsection = section.subsections?.find(sub => sub.id === activeContent);
+      if (subsection) {
+        return { type: 'subsection', content: subsection, parentSection: section };
+      }
+    }
+    
+    return null;
   };
   
-  const handleSubsectionClick = (subsectionId: string) => {
-    setActiveSubsection(activeSubsection === subsectionId ? '' : subsectionId);
-  };
+  const currentContent = getCurrentContent();
   
-  // Get relevant images for current section
+  // Get relevant images for current content
   const getRelevantImages = (pageNumber: number | undefined): ImageData[] => {
     if (!pageNumber || !imagesData || !Array.isArray(imagesData)) return [];
     return imagesData.filter(img => img.page === pageNumber);
   };
   
-  const relevantImages = getRelevantImages(currentSection?.page_number);
+  const relevantImages = getRelevantImages(currentContent?.content?.page_number);
   
-  // Get citations for current section
-  const getSectionCitations = (sectionCitations?: string[]): string[] => {
-    if (!sectionCitations || !Array.isArray(sectionCitations)) return [];
-    return sectionCitations;
+  // Get citations for current content
+  const getSectionCitations = (citations?: string[]): string[] => {
+    if (!citations || !Array.isArray(citations)) return [];
+    return citations;
   };
   
-  const sectionCitations = getSectionCitations(currentSection?.citations);
+  const contentCitations = getSectionCitations(currentContent?.content?.citations);
 
   // Handle citation click
   const handleCitationClick = (citation: string) => {
@@ -766,49 +772,41 @@ export default function PaperPage() {
       {/* Main Content */}
       <main className="flex-grow container mx-auto px-0 py-0">
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-x-0 min-h-screen">
-          {/* Left Sidebar - Navigation with Subsections */}
+          {/* Left Sidebar - Navigation with All Subsections Visible */}
           <aside className="lg:col-span-1 bg-white p-6 border-r border-gray-200">
             <div className="sticky top-20">
-              <nav className="space-y-1">
+              <nav className="space-y-2">
                 {sectionsData?.map((section) => (
-                  <div key={section.id}>
+                  <div key={section.id} className="space-y-1">
                     {/* Main Section */}
                     <button
-                      onClick={() => handleSectionClick(section.id)}
-                      className={`block w-full text-left px-4 py-2.5 rounded-md transition-colors ${
-                        activeSection === section.id
-                          ? 'bg-blue-50 text-blue-700 font-semibold'
+                      onClick={() => setActiveContent(section.id)}
+                      className={`block w-full text-left px-4 py-3 rounded-md transition-colors text-sm font-medium ${
+                        activeContent === section.id
+                          ? 'bg-blue-50 text-blue-700'
                           : 'text-gray-700 hover:bg-gray-100'
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span>{section.title}</span>
-                        {section.subsections && section.subsections.length > 0 && (
-                          <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">
-                            {section.subsections.length}
-                          </span>
-                        )}
+                      <div className="truncate" title={section.title}>
+                        {section.title}
                       </div>
                     </button>
                     
-                    {/* Subsections - Show when section is active */}
-                    {activeSection === section.id && section.subsections && section.subsections.length > 0 && (
-                      <div className="ml-4 mt-1 space-y-1">
-                        {section.subsections.map((subsection, index) => (
+                    {/* All Subsections - Always Visible */}
+                    {section.subsections && section.subsections.length > 0 && (
+                      <div className="ml-4 space-y-1">
+                        {section.subsections.map((subsection) => (
                           <button
                             key={subsection.id}
-                            onClick={() => handleSubsectionClick(subsection.id)}
+                            onClick={() => setActiveContent(subsection.id)}
                             className={`block w-full text-left px-3 py-2 rounded-md text-sm transition-colors border-l-2 ${
-                              activeSubsection === subsection.id
-                                ? 'border-blue-400 bg-blue-25 text-blue-600 font-medium'
+                              activeContent === subsection.id
+                                ? 'border-blue-400 bg-blue-25 text-blue-600'
                                 : 'border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300'
                             }`}
                           >
-                            <div className="flex items-center space-x-2">
-                              <span className="inline-flex items-center justify-center w-5 h-5 bg-gray-100 text-gray-600 text-xs rounded-full flex-shrink-0">
-                                {index + 1}
-                              </span>
-                              <span className="truncate">{subsection.title}</span>
+                            <div className="truncate" title={subsection.title}>
+                              {subsection.title}
                             </div>
                           </button>
                         ))}
@@ -822,128 +820,82 @@ export default function PaperPage() {
 
           {/* Center Content Area */}
           <div className="lg:col-span-3 bg-white p-6">
-            {currentSection && (
+            {currentContent && (
               <>
                 <h3 className="text-2xl font-semibold text-gray-800 mb-2">
-                  {currentSection.title}
+                  {currentContent.content.title}
                 </h3>
                 <p className="text-sm text-gray-500 mb-6">
                   arXiv:{paperData.arxiv_id} • {paperData.authors}
+                  {currentContent.content.page_number && (
+                    <span> • Page {currentContent.content.page_number}</span>
+                  )}
                 </p>
                 
-                {/* Main Section Content */}
+                {/* Content - Same formatting for sections and subsections */}
                 <div className="prose prose-lg max-w-none text-gray-700 leading-relaxed">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}
                     className="prose prose-gray max-w-none"
                     components={{
-                      // Custom rendering for better LaTeX support
+                      // Enhanced LaTeX and content rendering
                       p: ({ children }) => <p className="mb-4 leading-relaxed">{children}</p>,
                       h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 text-gray-900">{children}</h1>,
                       h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 text-gray-800">{children}</h2>,
                       h3: ({ children }) => <h3 className="text-lg font-medium mb-2 text-gray-700">{children}</h3>,
+                      h4: ({ children }) => <h4 className="text-base font-medium mb-2 text-gray-700">{children}</h4>,
+                      h5: ({ children }) => <h5 className="text-sm font-medium mb-2 text-gray-700">{children}</h5>,
+                      h6: ({ children }) => <h6 className="text-sm font-medium mb-2 text-gray-700">{children}</h6>,
                       code: ({ inline, children }) => 
                         inline ? (
                           <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">
                             {children}
                           </code>
                         ) : (
-                          <pre className="bg-gray-50 p-4 rounded-lg overflow-x-auto">
+                          <pre className="bg-gray-50 p-4 rounded-lg overflow-x-auto my-4">
                             <code className="text-sm font-mono text-gray-800">{children}</code>
                           </pre>
-                        )
+                        ),
+                      blockquote: ({ children }) => (
+                        <blockquote className="border-l-4 border-gray-300 pl-4 italic my-4">
+                          {children}
+                        </blockquote>
+                      ),
+                      ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-1">{children}</ul>,
+                      ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-1">{children}</ol>,
+                      li: ({ children }) => <li className="mb-1">{children}</li>,
+                      table: ({ children }) => (
+                        <div className="overflow-x-auto my-4">
+                          <table className="min-w-full border border-gray-300">{children}</table>
+                        </div>
+                      ),
+                      th: ({ children }) => (
+                        <th className="border border-gray-300 px-4 py-2 bg-gray-100 font-semibold text-left">
+                          {children}
+                        </th>
+                      ),
+                      td: ({ children }) => (
+                        <td className="border border-gray-300 px-4 py-2">{children}</td>
+                      ),
+                      // Enhanced math rendering
+                      div: ({ className, children }) => {
+                        if (className?.includes('math')) {
+                          return <div className={`${className} my-4 text-center`}>{children}</div>;
+                        }
+                        return <div className={className}>{children}</div>;
+                      },
+                      span: ({ className, children }) => {
+                        if (className?.includes('math')) {
+                          return <span className={`${className} mx-1`}>{children}</span>;
+                        }
+                        return <span className={className}>{children}</span>;
+                      }
                     }}
                   >
-                    {currentSection.content}
+                    {currentContent.content.content}
                   </ReactMarkdown>
                 </div>
-                
-                {/* Active Subsection Content */}
-                {activeSubsection && currentSubsection && (
-                  <div className="mt-8 border-t border-gray-200 pt-6">
-                    <div className="bg-blue-50 border-l-4 border-blue-400 p-6 rounded-r-lg">
-                      <div className="flex items-center space-x-2 mb-4">
-                        <span className="inline-flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">
-                          {currentSection.subsections?.findIndex(sub => sub.id === activeSubsection) + 1}
-                        </span>
-                        <h4 className="text-xl font-semibold text-blue-700">
-                          {currentSubsection.title}
-                        </h4>
-                      </div>
-                      {currentSubsection.page_number && (
-                        <p className="text-sm text-blue-600 mb-4">
-                          Page {currentSubsection.page_number}
-                        </p>
-                      )}
-                      <div className="prose prose-lg max-w-none text-gray-700 leading-relaxed">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkMath]}
-                          rehypePlugins={[rehypeKatex]}
-                          className="prose prose-gray max-w-none"
-                          components={{
-                            p: ({ children }) => <p className="mb-4 leading-relaxed">{children}</p>,
-                            h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 text-gray-900">{children}</h1>,
-                            h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 text-gray-800">{children}</h2>,
-                            h3: ({ children }) => <h3 className="text-lg font-medium mb-2 text-gray-700">{children}</h3>,
-                            code: ({ inline, children }) => 
-                              inline ? (
-                                <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">
-                                  {children}
-                                </code>
-                              ) : (
-                                <pre className="bg-gray-50 p-4 rounded-lg overflow-x-auto">
-                                  <code className="text-sm font-mono text-gray-800">{children}</code>
-                                </pre>
-                              )
-                          }}
-                        >
-                          {currentSubsection.content}
-                        </ReactMarkdown>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                {/* All Subsections Overview (when no specific subsection is selected) */}
-                {!activeSubsection && currentSection.subsections && currentSection.subsections.length > 0 && (
-                  <div className="mt-8 space-y-6">
-                    <div className="border-t border-gray-200 pt-6">
-                      <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
-                        <BookOpen className="w-5 h-5 mr-2 text-blue-600" />
-                        Detailed Exploration
-                      </h3>
-                      <p className="text-sm text-gray-600 mb-4">
-                        Click on any subsection in the sidebar to explore in detail, or browse the overview below.
-                      </p>
-                    </div>
-                    {currentSection.subsections.map((subsection, index) => (
-                      <div 
-                        key={subsection.id || index} 
-                        className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
-                        onClick={() => handleSubsectionClick(subsection.id)}
-                      >
-                        <div className="flex items-center space-x-2 mb-2">
-                          <span className="inline-flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">
-                            {index + 1}
-                          </span>
-                          <h4 className="text-lg font-semibold text-gray-800">
-                            {subsection.title}
-                          </h4>
-                          <ChevronRight className="w-4 h-4 text-gray-400 ml-auto" />
-                        </div>
-                        {subsection.page_number && (
-                          <p className="text-sm text-gray-500 mb-2 ml-8">
-                            Page {subsection.page_number}
-                          </p>
-                        )}
-                        <div className="text-sm text-gray-600 ml-8 line-clamp-3">
-                          {subsection.content.substring(0, 200)}...
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -981,7 +933,7 @@ export default function PaperPage() {
               {activeTab === 'images' && (
                 <div>
                   <p className="text-sm text-gray-600 mb-4">
-                    Figures and tables related to the current section.
+                    Figures and tables related to the current content.
                   </p>
                   {imagesLoading ? (
                     <div className="text-center py-8">
@@ -1007,7 +959,7 @@ export default function PaperPage() {
                   ) : (
                     <div className="text-center py-8">
                       <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                      <p className="text-sm text-gray-500">No images for this section</p>
+                      <p className="text-sm text-gray-500">No images for this content</p>
                     </div>
                   )}
                   {relevantImages.length > 0 && (
@@ -1022,19 +974,16 @@ export default function PaperPage() {
               {activeTab === 'sources' && (
                 <div>
                   <p className="text-sm text-gray-600 mb-4">
-                    Citations and references mentioned in this section.
+                    Citations and references mentioned in this content.
                   </p>
-                  {sectionCitations.length > 0 ? (
+                  {contentCitations.length > 0 ? (
                     <div className="space-y-3">
-                      {sectionCitations.map((citation, index) => (
+                      {contentCitations.map((citation, index) => (
                         <div
                           key={index}
                           className="bg-gray-50 p-3 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
                         >
                           <div className="flex items-start space-x-2">
-                            <span className="inline-flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full flex-shrink-0 mt-0.5">
-                              {index + 1}
-                            </span>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-gray-800 mb-1">
                                 Reference {index + 1}
@@ -1061,7 +1010,7 @@ export default function PaperPage() {
                   ) : (
                     <div className="text-center py-8">
                       <ExternalLink className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                      <p className="text-sm text-gray-500">No citations for this section</p>
+                      <p className="text-sm text-gray-500">No citations for this content</p>
                     </div>
                   )}
                 </div>
@@ -1071,20 +1020,23 @@ export default function PaperPage() {
         </div>
       </main>
 
-      {/* Image Modal */}
+      {/* Image Modal with Close Button */}
       {selectedImage && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="relative max-w-4xl max-h-full">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-full" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setSelectedImage(null)}
-              className="absolute top-4 right-4 text-white hover:text-gray-300 z-10"
+              className="absolute top-4 right-4 text-white hover:text-gray-300 z-10 bg-black bg-opacity-50 rounded-full p-2"
             >
-              <X className="w-8 h-8" />
+              <X className="w-6 h-6" />
             </button>
             <img
               src={selectedImage.url || `/api/image/${selectedImage.id}`}
               alt="Enlarged figure"
-              className="max-w-full max-h-full object-contain"
+              className="max-w-full max-h-full object-contain rounded-lg"
             />
           </div>
         </div>
