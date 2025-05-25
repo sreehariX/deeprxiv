@@ -32,6 +32,7 @@ export interface Section {
   title: string;
   content: string;
   citations?: number[];
+  page_number?: number;
   subsections?: SubSection[];
 }
 
@@ -40,6 +41,7 @@ export interface SubSection {
   title: string;
   content: string;
   citations?: number[];
+  page_number?: number;
 }
 
 export interface Citation {
@@ -91,7 +93,7 @@ export async function processArxivUrl(url: string): Promise<Paper> {
 }
 
 // Get paper details by arXiv ID
-export async function getPaper(arxivId: string): Promise<PaperDetail> {
+export async function getPaper(arxivId: string): Promise<PaperDetail | null> {
   try {
     const response = await axios.get(`${API_BASE_URL}/paper/${arxivId}`, {
       timeout: 10000, // 10 second timeout
@@ -99,6 +101,10 @@ export async function getPaper(arxivId: string): Promise<PaperDetail> {
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error)) {
+      if (error.response?.status === 404) {
+        // Paper not found - return null instead of throwing
+        return null;
+      }
       if (error.response) {
         throw new Error(error.response.data.detail || 'Failed to get paper details');
       } else if (error.request) {
@@ -129,7 +135,7 @@ export async function getPaperImages(arxivId: string): Promise<Image[]> {
 }
 
 // Get processing status of a paper
-export async function getPaperStatus(arxivId: string): Promise<{ arxiv_id: string; processed: boolean; progress?: string }> {
+export async function getPaperStatus(arxivId: string): Promise<{ arxiv_id: string; processed: boolean; progress?: string } | null> {
   try {
     const response = await axios.get(`${API_BASE_URL}/paper/${arxivId}/status`, {
       timeout: 5000, // 5 second timeout
@@ -137,6 +143,10 @@ export async function getPaperStatus(arxivId: string): Promise<{ arxiv_id: strin
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error)) {
+      if (error.response?.status === 404) {
+        // Paper not found - return null instead of throwing
+        return null;
+      }
       if (error.response) {
         throw new Error(error.response.data.detail || 'Failed to get paper status');
       } else if (error.request) {

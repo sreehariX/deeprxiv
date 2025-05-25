@@ -2,6 +2,8 @@ import os
 import requests
 import json
 from dotenv import load_dotenv
+import re
+from typing import Dict, Any, List
 
 # Load environment variables
 load_dotenv()
@@ -135,51 +137,136 @@ class LLMService:
         Generate sections and subsections for a paper based on its content.
         Returns a structured JSON representing the paper's organization along with citations.
         """
-        system_prompt = "You are an academic paper analyzer. Create a structured outline in valid JSON format."
+        system_prompt = """
+        You are an expert academic research interpreter and educational content creator.
+        
+        Your task is to transform a research paper into an interactive, educational wiki-like experience
+        that helps researchers understand complex concepts step by step.
+        
+        CRITICAL REQUIREMENTS:
+        1. Create 4-8 main sections that logically organize the paper's content
+        2. Each main section should have 2-4 subsections for detailed exploration
+        3. Focus on educational value over strict paper structure adherence
+        4. Use clear, descriptive titles that indicate what readers will learn
+        5. Include specific page references and figure/table mentions
+        6. Use proper markdown with LaTeX math notation
+        7. Make content accessible while maintaining technical accuracy
+        8. Connect concepts to broader research context
+        
+        SECTION ORGANIZATION STRATEGY:
+        - Start with foundational concepts and motivation
+        - Progress through methodology and technical details
+        - Present results with clear interpretation
+        - End with implications and future directions
+        
+        CONTENT QUALITY STANDARDS:
+        - Each section should be substantial (200-500 words)
+        - Subsections should dive deeper into specific aspects (150-300 words)
+        - Include examples, analogies, and real-world applications where relevant
+        - Reference specific figures, equations, and tables from the paper
+        - Explain the "why" behind methodological choices
+        """
         
         prompt = f"""
-        I'm providing you with the text of a scientific paper.
-        Please analyze this paper and create a structured outline with sections and subsections, similar to a wiki.
-
-        Your output should be a valid JSON array with this structure:
+        Analyze this research paper and create a comprehensive educational structure.
+        
+        TASK: Create a JSON array of sections that transforms this paper into an educational resource.
+        
+        REQUIRED JSON STRUCTURE:
         [
             {{
-                "id": "unique-id-for-section",
-                "title": "Section Title",
-                "content": "Summary of this section's content",
-                "citations": [1, 2, 3], // Reference indices to the citations you provide
+                "id": "descriptive-slug",
+                "title": "Clear, Educational Title",
+                "content": "Comprehensive markdown content with LaTeX math ($...$ inline, $$...$$ display)",
+                "citations": [1, 2, 3],
+                "page_number": 2,
                 "subsections": [
                     {{
-                        "id": "unique-id-for-subsection",
-                        "title": "Subsection Title",
-                        "content": "Detailed content for this subsection",
-                        "citations": [2, 4] // Reference indices to the citations you provide
+                        "id": "subsection-slug",
+                        "title": "Specific Subsection Topic",
+                        "content": "Detailed explanation with examples and context",
+                        "citations": [2, 4],
+                        "page_number": 3
                     }}
                 ]
             }}
         ]
 
-        For each section and subsection:
-        - "id" should be a slug-like identifier (lowercase, hyphens for spaces)
-        - "title" should reflect the actual section name from the paper or a logical name
-        - "content" should summarize the key points, findings, or information
-        - "citations" should include references to support the content
+        SECTION GUIDELINES:
         
-        Include all major sections like:
-        - Introduction/Overview
-        - Background/Related Work
-        - Methodology
-        - Results/Evaluation
-        - Discussion
-        - Conclusion
+        1. **Foundation & Context** (1-2 sections)
+           - Research problem and motivation
+           - Key concepts and background theory
+           - Related work and positioning
+           
+        2. **Methodology & Approach** (2-3 sections)
+           - Core methodology with clear explanations
+           - Technical implementation details
+           - Novel contributions and innovations
+           
+        3. **Results & Analysis** (1-2 sections)
+           - Experimental setup and datasets
+           - Key findings with interpretation
+           - Performance analysis and comparisons
+           
+        4. **Impact & Future** (1 section)
+           - Significance and implications
+           - Limitations and future work
+           - Broader impact on the field
 
-        The paper text:
+        CONTENT REQUIREMENTS FOR EACH SECTION:
+        - Start with a clear overview of what this section covers
+        - Explain concepts progressively from simple to complex
+        - Include specific references: "As shown in Figure 2 on page 5..."
+        - Use LaTeX for mathematical expressions: $E = mc^2$
+        - Provide context for why each concept matters
+        - Connect to real-world applications when possible
+        - End with how this connects to the next section
 
-        {paper_text[:50000]}  # Using first 50k characters to stay within token limits
+        SUBSECTION REQUIREMENTS:
+        - Each main section should have 2-4 focused subsections
+        - Subsections should explore specific aspects in depth
+        - Include code examples, algorithms, or detailed explanations
+        - Reference specific parts of the paper with page numbers
+        - Explain technical details with clear examples
+        - Show how concepts build upon each other
+
+        EXAMPLE SECTION STRUCTURE:
+        ```json
+        {{
+            "id": "neural-architecture",
+            "title": "Neural Architecture Design",
+            "content": "This section explores the novel neural network architecture proposed in the paper. The authors introduce a transformer-based model with several key innovations...",
+            "citations": [1, 3, 7],
+            "page_number": 4,
+            "subsections": [
+                {{
+                    "id": "attention-mechanism",
+                    "title": "Multi-Head Attention Mechanism",
+                    "content": "The attention mechanism is the core of the proposed architecture. As detailed on page 4, the model uses...",
+                    "citations": [1, 5],
+                    "page_number": 4
+                }},
+                {{
+                    "id": "positional-encoding",
+                    "title": "Enhanced Positional Encoding",
+                    "content": "Building on standard positional encoding, the authors propose...",
+                    "citations": [1, 8],
+                    "page_number": 5
+                }}
+            ]
+        }}
+        ```
+
+        PAPER TEXT TO ANALYZE:
+        {paper_text[:50000]}
+        
+        Generate a comprehensive educational structure that makes this research accessible and engaging for researchers.
         """
         
         print("Sending section generation request to Perplexity API...")
         try:
+            print("Calling Perplexity API for section generation...")
             result = self._call_perplexity_api(prompt, system_prompt)
             
             # Process the response to ensure it's valid JSON
@@ -187,15 +274,67 @@ class LLMService:
             citations = result["citations"]
             
             print(f"Received raw response from Perplexity (length: {len(content)})")
+            print(f"Citations count: {len(citations) if citations else 0}")
             
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
+            # Sanitize the JSON content to fix escape sequence issues
+            try:
+                print("Starting JSON sanitization...")
+                content = self._sanitize_json_string(content)
+                print("Successfully sanitized JSON content")
+            except Exception as sanitize_error:
+                print(f"CRITICAL ERROR: JSON sanitization failed: {sanitize_error}")
+                import traceback
+                traceback.print_exc()
+                # Continue with original content as fallback
+                print("Continuing with original content...")
             
-            # Parse and validate the JSON
-            sections = json.loads(content.strip())
-            print(f"Successfully parsed JSON response with {len(sections)} sections")
+            # Parse and validate the JSON with multiple fallback strategies
+            sections = None
+            parsing_attempts = [
+                lambda: json.loads(content.strip()),
+                lambda: json.loads(self._repair_json(content)),
+                lambda: json.loads(content.strip().replace('\n', ' ')),
+                lambda: json.loads(re.sub(r'//.*', '', content.strip())),  # Remove comments
+                lambda: json.loads(content.strip().replace('\\"', '"').replace('\\\\', '\\')),  # Fix double escaping
+                lambda: self._parse_json_with_ast(content),  # AST-based parsing as last resort
+            ]
+            
+            print(f"Attempting to parse JSON with {len(parsing_attempts)} different strategies...")
+            for i, attempt in enumerate(parsing_attempts):
+                try:
+                    print(f"JSON parsing attempt {i+1}...")
+                    sections = attempt()
+                    if sections is not None:  # Handle case where AST parsing returns None
+                        print(f"Successfully parsed JSON response with {len(sections)} sections (attempt {i+1})")
+                        break
+                    else:
+                        print(f"JSON parsing attempt {i+1} returned None")
+                except (json.JSONDecodeError, Exception) as parse_error:
+                    print(f"JSON parsing attempt {i+1} failed: {parse_error}")
+                    if i == len(parsing_attempts) - 1:
+                        # If all attempts fail, log the content for debugging and save to file
+                        print(f"All JSON parsing attempts failed. Content preview: {content[:500]}...")
+                        # Save the problematic content to a debug file
+                        try:
+                            with open('debug_json_content.txt', 'w', encoding='utf-8') as f:
+                                f.write(content)
+                            print("Saved problematic JSON content to debug_json_content.txt")
+                        except:
+                            pass
+                        
+                        # Create a fallback structure instead of raising an error
+                        print("Creating fallback section structure...")
+                        sections = [
+                            {
+                                "id": "overview",
+                                "title": "Overview",
+                                "content": "Paper content could not be automatically sectioned due to JSON parsing errors. Please check the debug file for details.",
+                                "citations": [],
+                                "page_number": 1,
+                                "subsections": []
+                            }
+                        ]
+                        break
             
             # Add citations to the response
             response_with_citations = {
@@ -229,26 +368,112 @@ class LLMService:
         Uses the section title and existing content as context.
         Returns the content and citations.
         """
-        system_prompt = "You are analyzing a scientific paper section. Provide a detailed analysis with citations."
+        system_prompt = """
+        You are an expert academic research educator and technical writer.
+        
+        Your task is to create comprehensive, educational content for a specific section of a research paper.
+        Think of yourself as writing for a high-quality educational platform like Khan Academy or Coursera,
+        but for advanced researchers and graduate students.
+        
+        CONTENT CREATION PRINCIPLES:
+        1. Start with clear context and learning objectives
+        2. Build concepts progressively from fundamentals to advanced
+        3. Use concrete examples and analogies where appropriate
+        4. Include mathematical formulations with clear explanations
+        5. Reference specific parts of the paper with page numbers
+        6. Connect concepts to broader research landscape
+        7. Explain the "why" behind technical choices
+        8. Highlight innovations and novel contributions
+        
+        FORMATTING REQUIREMENTS:
+        - Use markdown with proper headings, lists, and emphasis
+        - Include LaTeX math: $inline$ and $$display$$ equations
+        - Use code blocks for algorithms or pseudocode
+        - Include specific figure/table references from the paper
+        - Add page number citations throughout
+        - Use clear paragraph structure with logical flow
+        
+        EDUCATIONAL QUALITY STANDARDS:
+        - Explain technical terms when first introduced
+        - Provide intuitive explanations before diving into details
+        - Include real-world applications and implications
+        - Address potential confusion points
+        - Connect to related concepts in other sections
+        - Maintain academic rigor while being accessible
+        """
         
         prompt = f"""
-        You are analyzing a scientific paper section titled "{section_title}".
+        Create comprehensive educational content for the section: "{section_title}"
         
-        I have identified this section in the paper with the following initial content:
-        "{section_content}"
+        CONTEXT: This section is part of a larger educational breakdown of a research paper.
+        The initial content outline is: "{section_content}"
         
-        Please provide a detailed analysis and summary of this section. Include:
-        1. The key points and arguments presented
-        2. Any methods or techniques described
-        3. Important findings or results
-        4. Implications of the information in this section
+        YOUR TASK: Expand this into a detailed, educational explanation that:
         
-        Use clear, concise language and maintain the academic tone of the paper.
-        Format your response as plain text that could be displayed in a wiki-like interface.
+        1. **INTRODUCTION** (1-2 paragraphs)
+           - Clearly state what this section covers
+           - Explain why this topic is important for understanding the paper
+           - Provide context for how it fits into the broader research
         
-        Here is the paper text for context:
+        2. **CORE CONTENT** (3-5 paragraphs)
+           - Explain key concepts with clear definitions
+           - Include mathematical formulations where relevant
+           - Reference specific figures, tables, or equations from the paper
+           - Use examples to illustrate complex ideas
+           - Explain the reasoning behind methodological choices
         
-        {paper_text[:30000]}  # Using first 30k characters to stay within token limits
+        3. **TECHNICAL DETAILS** (2-3 paragraphs)
+           - Dive deeper into implementation specifics
+           - Include algorithms, pseudocode, or detailed procedures
+           - Explain parameter choices and design decisions
+           - Reference specific page numbers and sections of the paper
+        
+        4. **SIGNIFICANCE & CONNECTIONS** (1-2 paragraphs)
+           - Explain why this approach is novel or important
+           - Connect to related work and broader research context
+           - Highlight key innovations or contributions
+           - Explain implications for the field
+        
+        SPECIFIC REQUIREMENTS:
+        - Include at least 3-5 specific page references (e.g., "As shown on page 7...")
+        - Reference at least 2-3 figures or tables if they exist (e.g., "Figure 3 illustrates...")
+        - Use LaTeX notation for any mathematical expressions
+        - Include code blocks for algorithms or important equations
+        - Explain any technical jargon or domain-specific terms
+        - Make connections to other sections when relevant
+        
+        EXAMPLE STRUCTURE:
+        ```markdown
+        ## Understanding [Concept Name]
+        
+        This section explores [brief overview]. Understanding this concept is crucial because [importance].
+        
+        ### Core Methodology
+        
+        The authors propose [main idea]. As detailed on page X, this approach [explanation].
+        
+        The mathematical foundation can be expressed as:
+        $$equation$$
+        
+        Where [variable explanations].
+        
+        ### Implementation Details
+        
+        Figure Y on page Z illustrates the [specific aspect]. The algorithm proceeds as follows:
+        
+        ```
+        Algorithm pseudocode
+        ```
+        
+        ### Significance
+        
+        This approach represents a significant advance because [reasons].
+        ```
+        
+        PAPER TEXT FOR REFERENCE:
+        {paper_text[:30000]}
+        
+        Generate educational content that makes this section accessible and engaging while maintaining technical accuracy.
         """
         
         print(f"Generating content for section/subsection: {section_title}")
@@ -268,4 +493,208 @@ class LLMService:
             return {
                 "content": f"Content generation for section '{section_title}' failed due to: {str(e)}",
                 "citations": []
-            } 
+            }
+
+    def _sanitize_json_string(self, json_str: str) -> str:
+        """
+        Sanitize a JSON string to fix common issues like invalid escape sequences.
+        """
+        try:
+            # Remove any markdown code block markers
+            if "```json" in json_str:
+                json_str = json_str.split("```json")[1].split("```")[0].strip()
+            elif "```" in json_str:
+                json_str = json_str.split("```")[1].split("```")[0].strip()
+            
+            # Remove any leading/trailing text that's not JSON
+            json_str = json_str.strip()
+            
+            # Find the actual JSON content (should start with [ or {)
+            start_idx = -1
+            for i, char in enumerate(json_str):
+                if char in '[{':
+                    start_idx = i
+                    break
+            
+            if start_idx > 0:
+                json_str = json_str[start_idx:]
+            
+            # Find the end of JSON content
+            bracket_count = 0
+            end_idx = len(json_str)
+            for i, char in enumerate(json_str):
+                if char in '[{':
+                    bracket_count += 1
+                elif char in ']}':
+                    bracket_count -= 1
+                    if bracket_count == 0:
+                        end_idx = i + 1
+                        break
+            
+            json_str = json_str[:end_idx]
+            
+            # Remove JavaScript-style comments first
+            json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
+            
+            # Fix trailing commas before closing brackets
+            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+            
+            # More aggressive escape sequence fixing
+            # First, protect already properly escaped sequences
+            json_str = json_str.replace('\\"', '___ESCAPED_QUOTE___')
+            json_str = json_str.replace('\\\\', '___ESCAPED_BACKSLASH___')
+            json_str = json_str.replace('\\/', '___ESCAPED_SLASH___')
+            json_str = json_str.replace('\\n', '___ESCAPED_NEWLINE___')
+            json_str = json_str.replace('\\r', '___ESCAPED_RETURN___')
+            json_str = json_str.replace('\\t', '___ESCAPED_TAB___')
+            json_str = json_str.replace('\\b', '___ESCAPED_BACKSPACE___')
+            json_str = json_str.replace('\\f', '___ESCAPED_FORMFEED___')
+            
+            # Now fix any remaining backslashes that aren't part of valid escape sequences
+            # This handles cases like \{ \} \$ etc.
+            try:
+                json_str = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_str)
+            except Exception as regex_error:
+                print(f"Regex error in backslash fixing: {regex_error}")
+                pass
+            
+            # Handle LaTeX-style escapes that shouldn't be escaped in JSON
+            json_str = json_str.replace('\\\\{', '{').replace('\\\\}', '}')
+            json_str = json_str.replace('\\\\$', '$')
+            
+            # Restore the properly escaped sequences
+            json_str = json_str.replace('___ESCAPED_QUOTE___', '\\"')
+            json_str = json_str.replace('___ESCAPED_BACKSLASH___', '\\\\')
+            json_str = json_str.replace('___ESCAPED_SLASH___', '\\/')
+            json_str = json_str.replace('___ESCAPED_NEWLINE___', '\\n')
+            json_str = json_str.replace('___ESCAPED_RETURN___', '\\r')
+            json_str = json_str.replace('___ESCAPED_TAB___', '\\t')
+            json_str = json_str.replace('___ESCAPED_BACKSPACE___', '\\b')
+            json_str = json_str.replace('___ESCAPED_FORMFEED___', '\\f')
+            
+            return json_str
+        except Exception as e:
+            print(f"Error in _sanitize_json_string: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return json_str
+
+    def _repair_json(self, json_str: str) -> str:
+        """
+        Attempt to repair malformed JSON by fixing common issues.
+        """
+        # Start with sanitization
+        json_str = self._sanitize_json_string(json_str)
+        
+        # Fix unescaped quotes within string values
+        # This is a more sophisticated approach to handle quotes in content
+        lines = json_str.split('\n')
+        fixed_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line in ['{', '}', '[', ']', ',']:
+                fixed_lines.append(line)
+                continue
+            
+            # Handle lines with key-value pairs
+            if ':' in line and '"' in line:
+                # Find the colon that separates key from value
+                colon_idx = line.find(':')
+                key_part = line[:colon_idx]
+                value_part = line[colon_idx + 1:].strip()
+                
+                # If the value is a string (starts and ends with quotes)
+                if value_part.startswith('"'):
+                    # Find the closing quote, accounting for trailing comma
+                    trailing_comma = value_part.rstrip().endswith(',')
+                    if trailing_comma:
+                        value_content = value_part[1:-2]  # Remove quotes and comma
+                    else:
+                        value_content = value_part[1:-1]  # Remove quotes
+                    
+                    # Escape any unescaped quotes in the content
+                    # First protect already escaped quotes
+                    value_content = value_content.replace('\\"', '___TEMP_ESCAPED___')
+                    # Escape unescaped quotes
+                    value_content = value_content.replace('"', '\\"')
+                    # Restore the protected quotes
+                    value_content = value_content.replace('___TEMP_ESCAPED___', '\\"')
+                    
+                    # Reconstruct the line
+                    comma = ',' if trailing_comma else ''
+                    line = f'{key_part}: "{value_content}"{comma}'
+            
+            fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines)
+
+    def _parse_json_with_ast(self, json_str: str) -> dict:
+        """
+        Attempt to parse JSON using a more robust AST-based approach.
+        This is a last resort method that tries to extract structured data even from malformed JSON.
+        """
+        try:
+            # Clean the string first
+            json_str = self._repair_json(json_str)
+            
+            # Try to use ast.literal_eval for Python-like structures
+            import ast
+            # Replace JSON booleans with Python booleans
+            json_str = json_str.replace('true', 'True').replace('false', 'False').replace('null', 'None')
+            
+            result = ast.literal_eval(json_str)
+            return result
+        except:
+            # If AST parsing fails, try to manually extract the structure
+            try:
+                # This is a very basic fallback - extract what we can
+                lines = json_str.split('\n')
+                sections = []
+                current_section = {}
+                
+                for line in lines:
+                    line = line.strip()
+                    if '"id":' in line:
+                        if current_section:
+                            sections.append(current_section)
+                        current_section = {}
+                        # Extract ID
+                        id_match = re.search(r'"id":\s*"([^"]*)"', line)
+                        if id_match:
+                            current_section['id'] = id_match.group(1)
+                    elif '"title":' in line:
+                        # Extract title
+                        title_match = re.search(r'"title":\s*"([^"]*)"', line)
+                        if title_match:
+                            current_section['title'] = title_match.group(1)
+                    elif '"content":' in line:
+                        # Extract content (this is simplified)
+                        content_match = re.search(r'"content":\s*"([^"]*)"', line)
+                        if content_match:
+                            current_section['content'] = content_match.group(1)
+                        else:
+                            current_section['content'] = "Content extraction failed"
+                    elif '"page_number":' in line:
+                        # Extract page number
+                        page_match = re.search(r'"page_number":\s*(\d+)', line)
+                        if page_match:
+                            current_section['page_number'] = int(page_match.group(1))
+                
+                if current_section:
+                    sections.append(current_section)
+                
+                # Ensure each section has required fields
+                for section in sections:
+                    if 'citations' not in section:
+                        section['citations'] = []
+                    if 'subsections' not in section:
+                        section['subsections'] = []
+                    if 'content' not in section:
+                        section['content'] = "Content could not be extracted"
+                    if 'page_number' not in section:
+                        section['page_number'] = 1
+                
+                return sections if sections else None
+            except:
+                return None 

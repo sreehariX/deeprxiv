@@ -33,42 +33,42 @@ export default function HealthCheckButton() {
     <div className="flex flex-col items-center">
       <button
         onClick={checkHealth}
-        className={`flex items-center space-x-2 px-5 py-2.5 rounded-lg font-medium transition-all ${
+        className={`flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-full h-10 px-4 text-sm font-bold leading-normal tracking-[0.015em] transition-colors ${
           status === 'idle' 
-            ? 'bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-800 dark:hover:bg-gray-700 dark:text-gray-200' 
+            ? 'bg-gray-100 hover:bg-gray-200 text-gray-800' 
             : status === 'checking'
-            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 cursor-wait'
+            ? 'bg-blue-100 text-blue-700 cursor-wait'
             : status === 'online'
-            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-            : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+            ? 'bg-green-100 text-green-700'
+            : 'bg-red-100 text-red-700'
         }`}
         disabled={status === 'checking'}
       >
         {status === 'idle' && (
           <>
-            <ActivitySquare className="w-5 h-5" />
-            <span>Check Backend Status</span>
+            <ActivitySquare className="w-4 h-4 mr-2" />
+            <span className="truncate">Check Backend Status</span>
           </>
         )}
         
         {status === 'checking' && (
           <>
-            <div className="w-5 h-5 border-t-2 border-b-2 border-current rounded-full animate-spin"></div>
-            <span>Checking Status...</span>
+            <div className="w-4 h-4 border-t-2 border-b-2 border-current rounded-full animate-spin mr-2"></div>
+            <span className="truncate">Checking Status...</span>
           </>
         )}
         
         {status === 'online' && (
           <>
-            <CheckCircle className="w-5 h-5" />
-            <span>Backend Online</span>
+            <CheckCircle className="w-4 h-4 mr-2" />
+            <span className="truncate">Backend Online</span>
           </>
         )}
         
         {status === 'offline' && (
           <>
-            <XCircle className="w-5 h-5" />
-            <span>Backend Offline</span>
+            <XCircle className="w-4 h-4 mr-2" />
+            <span className="truncate">Backend Offline</span>
           </>
         )}
       </button>
@@ -76,26 +76,26 @@ export default function HealthCheckButton() {
       {status !== 'idle' && (
         <div className={`mt-4 p-4 rounded-lg border w-full ${
           status === 'checking' 
-            ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800' 
+            ? 'bg-blue-50 border-blue-200' 
             : status === 'online'
-            ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
-            : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
+            ? 'bg-green-50 border-green-200'
+            : 'bg-red-50 border-red-200'
         }`}>
           {status === 'checking' && (
             <div className="flex items-center justify-center">
-              <div className="w-4 h-4 border-t-2 border-blue-500 dark:border-blue-400 border-solid rounded-full animate-spin mr-2"></div>
-              <p className="text-blue-600 dark:text-blue-400">Checking backend status...</p>
+              <div className="w-4 h-4 border-t-2 border-blue-500 border-solid rounded-full animate-spin mr-2"></div>
+              <p className="text-blue-600">Checking backend status...</p>
             </div>
           )}
           
           {status === 'online' && (
             <div className="text-center">
               <div className="flex items-center justify-center mb-2">
-                <CheckCircle className="w-8 h-8 text-green-500 dark:text-green-400" />
+                <CheckCircle className="w-8 h-8 text-green-500" />
               </div>
-              <p className="text-green-600 dark:text-green-400 font-semibold text-lg">Backend is online!</p>
+              <p className="text-green-600 font-semibold text-lg">Backend is online!</p>
               {responseTime && (
-                <div className="inline-flex items-center justify-center bg-green-100 dark:bg-green-800/30 px-2.5 py-0.5 rounded-full text-sm font-medium text-green-800 dark:text-green-300 mt-2">
+                <div className="inline-flex items-center justify-center bg-green-100 px-2.5 py-0.5 rounded-full text-sm font-medium text-green-800 mt-2">
                   Response time: {responseTime}ms
                 </div>
               )}
@@ -105,18 +105,18 @@ export default function HealthCheckButton() {
           {status === 'offline' && (
             <div className="text-center">
               <div className="flex items-center justify-center mb-2">
-                <AlertTriangle className="w-8 h-8 text-red-500 dark:text-red-400" />
+                <AlertTriangle className="w-8 h-8 text-red-500" />
               </div>
-              <p className="text-red-600 dark:text-red-400 font-semibold text-lg mb-2">Backend is offline</p>
-              <p className="text-red-500 dark:text-red-400 text-sm mb-4">
+              <p className="text-red-600 font-semibold text-lg mb-2">Backend is offline</p>
+              <p className="text-red-500 text-sm mb-4">
                 Unable to connect to backend at http://127.0.0.1:8000/api
               </p>
-              <div className="bg-white dark:bg-gray-800 rounded-lg p-4 text-xs text-gray-800 dark:text-gray-300 font-mono">
+              <div className="bg-white rounded-lg p-4 text-xs text-gray-800 font-mono">
                 <p className="font-semibold mb-2">To start the backend server:</p>
                 <ol className="list-decimal pl-5 space-y-1 text-left">
                   <li>Open a terminal/command prompt</li>
                   <li>Navigate to the deeprxiv-backend directory</li>
-                  <li>Run: <code className="bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">python run.py</code></li>
+                  <li>Run: <code className="bg-gray-100 px-1.5 py-0.5 rounded">python run.py</code></li>
                 </ol>
               </div>
             </div>

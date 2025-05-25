@@ -283,8 +283,14 @@ def process_paper(arxiv_id: str, db: Session = None):
         
         # Generate sections data with Perplexity
         try:
-            print(f"Generating sections for paper {arxiv_id}...")
+            print(f"Starting LLM section generation for paper {arxiv_id}...")
+            print(f"Paper text length: {len(paper.extracted_text)} characters")
+            
             sections_response = llm_service.generate_paper_sections(paper.extracted_text)
+            print(f"LLM section generation completed successfully")
+            print(f"Response type: {type(sections_response)}")
+            print(f"Response keys: {sections_response.keys() if isinstance(sections_response, dict) else 'Not a dict'}")
+            
             sections = sections_response["sections"]
             citations = sections_response["citations"]
             
@@ -302,18 +308,25 @@ def process_paper(arxiv_id: str, db: Session = None):
                 paper_processing_status[arxiv_id] = f"Generating content for section {i+1}/{section_count}: {section['title']}"
                 print(f"Status: {paper_processing_status[arxiv_id]}")
                 
-                # Generate detailed content for the main section
-                section_content_response = llm_service.generate_section_content(
-                    paper.extracted_text,
-                    section["title"],
-                    section["content"]
-                )
-                section["content"] = section_content_response["content"]
-                # Add citations to the section if available
-                if "citations" in section_content_response and section_content_response["citations"]:
-                    section["citations"] = section_content_response["citations"]
-                
-                print(f"Generated content for section {section['title']} ({len(section['content'])} chars)")
+                try:
+                    # Generate detailed content for the main section
+                    print(f"Generating content for main section: {section['title']}")
+                    section_content_response = llm_service.generate_section_content(
+                        paper.extracted_text,
+                        section["title"],
+                        section["content"]
+                    )
+                    section["content"] = section_content_response["content"]
+                    # Add citations to the section if available
+                    if "citations" in section_content_response and section_content_response["citations"]:
+                        section["citations"] = section_content_response["citations"]
+                    
+                    print(f"Generated content for section {section['title']} ({len(section['content'])} chars)")
+                except Exception as section_error:
+                    print(f"Error generating content for section {section['title']}: {str(section_error)}")
+                    import traceback
+                    traceback.print_exc()
+                    # Keep the original content if generation fails
                 
                 # Process subsections if they exist
                 if "subsections" in section and section["subsections"]:
@@ -323,24 +336,47 @@ def process_paper(arxiv_id: str, db: Session = None):
                         paper_processing_status[arxiv_id] = f"Generating content for subsection {j+1}/{subsection_count} of {section['title']}"
                         print(f"Status: {paper_processing_status[arxiv_id]}")
                         
-                        subsection_content_response = llm_service.generate_section_content(
-                            paper.extracted_text,
-                            subsection["title"],
-                            subsection["content"]
-                        )
-                        subsection["content"] = subsection_content_response["content"]
-                        # Add citations to the subsection if available
-                        if "citations" in subsection_content_response and subsection_content_response["citations"]:
-                            subsection["citations"] = subsection_content_response["citations"]
-                        
-                        print(f"  Generated content for subsection {subsection['title']} ({len(subsection['content'])} chars)")
+                        try:
+                            print(f"Generating content for subsection: {subsection['title']}")
+                            subsection_content_response = llm_service.generate_section_content(
+                                paper.extracted_text,
+                                subsection["title"],
+                                subsection["content"]
+                            )
+                            subsection["content"] = subsection_content_response["content"]
+                            # Add citations to the subsection if available
+                            if "citations" in subsection_content_response and subsection_content_response["citations"]:
+                                subsection["citations"] = subsection_content_response["citations"]
+                            
+                            print(f"  Generated content for subsection {subsection['title']} ({len(subsection['content'])} chars)")
+                        except Exception as subsection_error:
+                            print(f"Error generating content for subsection {subsection['title']}: {str(subsection_error)}")
+                            import traceback
+                            traceback.print_exc()
+                            # Keep the original content if generation fails
             
             # Store the sections and citations data as JSON
-            paper.sections_data = json.dumps({
+            sections_data_to_save = {
                 "sections": sections,
                 "citations": citations
-            })
-            print(f"Successfully generated {len(sections)} sections for paper {arxiv_id}")
+            }
+            
+            # Debug: Log subsections info
+            total_subsections = 0
+            for section in sections:
+                if 'subsections' in section and section['subsections']:
+                    subsection_count = len(section['subsections'])
+                    total_subsections += subsection_count
+                    print(f"Section '{section['title']}' has {subsection_count} subsections:")
+                    for i, subsection in enumerate(section['subsections']):
+                        print(f"  {i+1}. {subsection.get('title', 'No title')} (ID: {subsection.get('id', 'No ID')})")
+                else:
+                    print(f"Section '{section['title']}' has no subsections")
+            
+            print(f"Total subsections across all sections: {total_subsections}")
+            
+            paper.sections_data = json.dumps(sections_data_to_save)
+            print(f"Successfully generated {len(sections)} sections with {total_subsections} total subsections for paper {arxiv_id}")
             
             # Save sections data to database
             db.add(paper)
@@ -349,7 +385,10 @@ def process_paper(arxiv_id: str, db: Session = None):
             print("Saved sections data to database")
             
         except Exception as sections_error:
-            print(f"Error generating sections: {str(sections_error)}")
+            print(f"CRITICAL ERROR in LLM section generation: {str(sections_error)}")
+            import traceback
+            traceback.print_exc()
+            
             # Create a basic structure in case of error
             basic_sections = [
                 {
@@ -357,15 +396,34 @@ def process_paper(arxiv_id: str, db: Session = None):
                     "title": "Overview",
                     "content": paper.abstract or "Paper overview not available.",
                     "citations": [],
-                    "subsections": []
+                    "subsections": [
+                        {
+                            "id": "abstract-summary",
+                            "title": "Abstract Summary",
+                            "content": "This subsection provides a summary of the paper's abstract and main contributions.",
+                            "citations": [],
+                            "page_number": 1
+                        },
+                        {
+                            "id": "key-findings",
+                            "title": "Key Findings",
+                            "content": "This subsection highlights the main findings and results presented in the paper.",
+                            "citations": [],
+                            "page_number": 1
+                        }
+                    ],
+                    "page_number": 1
                 }
             ]
-            paper.sections_data = json.dumps(basic_sections)
+            paper.sections_data = json.dumps({
+                "sections": basic_sections,
+                "citations": []
+            })
+            print("Created and saved basic fallback sections due to LLM error")
             # Save basic sections to database
             db.add(paper)
             db.commit()
             db.refresh(paper)
-            print("Saved basic sections data to database")
         
         # Update status
         paper_processing_status[arxiv_id] = "Creating folder structure"
@@ -457,16 +515,22 @@ def create_nextjs_folder_structure(paper):
         try:
             sections_data = json.loads(paper.sections_data) if paper.sections_data else {}
             
-            # Check if we have the new format with sections and citations
-            sections = sections_data.get("sections", [])
-            citations = sections_data.get("citations", [])
-            
-            # If we don't have the new format, try the old format
-            if not isinstance(sections, list) and isinstance(sections_data, list):
+            # Handle different formats of sections_data
+            if isinstance(sections_data, dict):
+                # New format with sections and citations
+                sections = sections_data.get("sections", [])
+                citations = sections_data.get("citations", [])
+            elif isinstance(sections_data, list):
+                # Old format - direct list of sections
                 sections = sections_data
                 citations = []
+            else:
+                # Fallback for unexpected format
+                sections = []
+                citations = []
                 
-            if not sections:
+            # Ensure we have valid sections
+            if not sections or not isinstance(sections, list):
                 sections = [
                     {
                         "id": "overview",
@@ -476,7 +540,13 @@ def create_nextjs_folder_structure(paper):
                         "subsections": []
                     }
                 ]
-        except (json.JSONDecodeError, TypeError):
+                
+            # Ensure citations is a list
+            if not isinstance(citations, list):
+                citations = []
+                
+        except (json.JSONDecodeError, TypeError, AttributeError) as e:
+            print(f"Error parsing sections data: {e}")
             sections = [
                 {
                     "id": "overview",
@@ -488,446 +558,566 @@ def create_nextjs_folder_structure(paper):
             ]
             citations = []
         
-        # Create page.tsx with DeepWiki-like structure and equation support
-        page_content = f"""'use client';
+        # Parse extracted images from the paper
+        try:
+            if isinstance(paper.extracted_images, str):
+                images = json.loads(paper.extracted_images)
+            else:
+                images = paper.extracted_images or []
+                
+            # Add API URLs for each image
+            for image in images:
+                if 'id' in image:
+                    image['url'] = f"/api/image/{image['id']}"
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            images = []
+        
+        # Create a simplified page.tsx with enhanced markdown support
+        # We'll avoid complex templating with f-strings
+        safe_title = (paper.title or "Untitled Paper").replace("'", "\\'").replace('"', '\\"')
+        safe_authors = (paper.authors or "").replace("'", "\\'").replace('"', '\\"')
+        safe_abstract = (paper.abstract or "").replace("'", "\\'").replace('"', '\\"').replace("\n", " ")
+        
+        sections_json = json.dumps(sections).replace("'", "\\'").replace("`", "\\`")
+        citations_json = json.dumps(citations).replace("'", "\\'").replace("`", "\\`")
+        
+        page_content = """'use client';
 
-import {{ useState, useEffect, useRef }} from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import {{ 
-  ArrowLeft, 
-  ExternalLink, 
-  Download, 
-  ChevronRight, 
-  ChevronDown,
-  Menu,
-  FileText,
-  BookOpen
-}} from 'lucide-react';
-import Script from 'next/script';
+import { ArrowLeft, Image as ImageIcon, ExternalLink, BookOpen, Clock, X, Play, ChevronRight } from 'lucide-react';
+import 'katex/dist/katex.min.css';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
-// KaTeX CSS for equation rendering
-const KatexCSS = () => (
-  <>
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css"
-      integrity="sha384-GvrOXuhMATgEsSwCs4smul74iXGOixntILdUW9XmUC6+HX0sLNAK3q71HotJqlAn"
-      crossOrigin="anonymous"
-    />
-  </>
-);
+// Types for better TypeScript support
+interface ImageData {
+  id: string;
+  page: number;
+  original_position?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  expanded_position?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  path?: string;
+  url?: string;
+}
+
+interface SubSection {
+  id: string;
+  title: string;
+  content: string;
+  citations?: string[];
+  page_number?: number;
+}
+
+interface Section {
+  id: string;
+  title: string;
+  content: string;
+  citations?: string[];
+  page_number?: number;
+  subsections?: SubSection[];
+}
 
 // Paper data
-const paperData = {{
-  arxiv_id: '{paper.arxiv_id}',
-  title: '{(paper.title or "Untitled Paper").replace("'", "\\'")}',
-  authors: '{(paper.authors or "").replace("'", "\\'")}',
-  abstract: '{(paper.abstract or "").replace("'", "\\'")}',
-}};
+const paperData = {
+  id: """ + str(paper.id or 0) + """,
+  arxiv_id: '""" + paper.arxiv_id + """',
+  title: '""" + safe_title + """',
+  authors: '""" + safe_authors + """',
+  abstract: '""" + safe_abstract + """',
+  processed: true
+};
 
 // Sections data
-const sectionsData = {json.dumps(sections)};
+const sectionsData: Section[] = """ + sections_json + """;
+const citationsData: string[] = """ + citations_json + """;
 
-// Citations data
-const citationsData = {json.dumps(citations)};
+// YouTube URL detection function
+const isYouTubeUrl = (url: string): boolean => {
+  return /(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/|youtube\\.com\\/embed\\/)/.test(url);
+};
 
-export default function PaperPage() {{
-  const [activeSection, setActiveSection] = useState(sectionsData[0]?.id);
-  const [activeSubsection, setActiveSubsection] = useState(null);
-  const [expandedSections, setExpandedSections] = useState({{}});
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  
-  const activeSectionRef = useRef(null);
-  
-  // Initialize section expansion state
-  useEffect(() => {{
-    const initialExpandedSections = {{}};
-    sectionsData.forEach(section => {{
-      initialExpandedSections[section.id] = true;
-    }});
-    setExpandedSections(initialExpandedSections);
-  }}, []);
-  
-  // Scroll to the active section when it changes
-  useEffect(() => {{
-    if (activeSectionRef.current) {{
-      activeSectionRef.current.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-    }}
-  }}, [activeSection, activeSubsection]);
-  
-  // Initialize KaTeX for equation rendering
-  useEffect(() => {{
-    const renderMathInElement = window.katex?.renderMathInElement;
-    if (renderMathInElement) {{
-      document.querySelectorAll('.math-content').forEach(el => {{
-        renderMathInElement(el, {{
-          delimiters: [
-            {{ left: '$$', right: '$$', display: true }},
-            {{ left: '$', right: '$', display: false }},
-            {{ left: '\\\\(', right: '\\\\)', display: false }},
-            {{ left: '\\\\[', right: '\\\\]', display: true }}
-          ],
-          throwOnError: false
-        }});
-      }});
-    }}
-  }}, [activeSection, activeSubsection]);
+// Extract YouTube video ID
+const getYouTubeVideoId = (url: string): string | null => {
+  const match = url.match(/(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/|youtube\\.com\\/embed\\/)([^&\\n?#]+)/);
+  return match ? match[1] : null;
+};
 
-  // Find the active section content
-  const currentSection = sectionsData.find(section => section.id === activeSection);
-  const currentSubsection = activeSubsection
-    ? currentSection?.subsections?.find(sub => sub.id === activeSubsection)
-    : null;
+export default function PaperPage() {
+  const [activeSection, setActiveSection] = useState('');
+  const [activeSubsection, setActiveSubsection] = useState('');
+  const [activeTab, setActiveTab] = useState<'images' | 'sources'>('sources');
+  const [imagesData, setImagesData] = useState<ImageData[]>([]);
+  const [imagesLoading, setImagesLoading] = useState(true);
+  const [selectedImage, setSelectedImage] = useState<ImageData | null>(null);
+  const [youtubeModal, setYoutubeModal] = useState<{ isOpen: boolean; videoId: string | null }>({
+    isOpen: false,
+    videoId: null
+  });
   
-  const contentToDisplay = currentSubsection
-    ? currentSubsection.content
-    : currentSection?.content;
+  // Fetch images from API
+  useEffect(() => {
+    const fetchImages = async () => {
+      try {
+        setImagesLoading(true);
+        const response = await fetch(`http://localhost:8000/api/images/${paperData.arxiv_id}`);
+        if (response.ok) {
+          const images = await response.json();
+          setImagesData(images);
+          // If images are available, switch to images tab
+          if (images && images.length > 0) {
+            setActiveTab('images');
+          }
+        } else {
+          console.error('Failed to fetch images:', response.statusText);
+          setImagesData([]);
+        }
+      } catch (error) {
+        console.error('Error fetching images:', error);
+        setImagesData([]);
+      } finally {
+        setImagesLoading(false);
+      }
+    };
+
+    fetchImages();
+  }, []);
   
-  // Get citations for the current section/subsection
-  const currentCitations = currentSubsection?.citations || currentSection?.citations || [];
+  // Initialize with the first section
+  useEffect(() => {
+    if (sectionsData?.length > 0) {
+      setActiveSection(sectionsData[0].id);
+    }
+  }, []);
   
-  // Function to render citations
-  const renderCitations = () => {{
-    if (citationsData.length === 0 || currentCitations.length === 0) return null;
-    
-    return (
-      <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
-        <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">References</h3>
-        <ol className="list-decimal pl-5 space-y-2">
-          {{currentCitations.map((citationIndex) => {{
-            const citation = citationsData[citationIndex];
-            return (
-              <li key={{citationIndex}} className="text-sm text-gray-700 dark:text-gray-300">
-                <a 
-                  href={{citation?.url || "#"}} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="text-blue-600 dark:text-blue-400 hover:underline break-words"
-                >
-                  {{citation?.title || citation?.url || `Citation ${{citationIndex + 1}}`}}
-                </a>
-              </li>
-            );
-          }})}}
-        </ol>
-      </div>
-    );
-  }};
+  // Get current section and subsection
+  const currentSection = sectionsData?.find(section => section.id === activeSection);
+  const currentSubsection = currentSection?.subsections?.find(sub => sub.id === activeSubsection);
   
-  // Function to toggle section expansion
-  const toggleSectionExpand = (sectionId) => {{
-    setExpandedSections(prev => ({{
-      ...prev,
-      [sectionId]: !prev[sectionId]
-    }}));
-  }};
+  // Handle section/subsection navigation
+  const handleSectionClick = (sectionId: string) => {
+    setActiveSection(sectionId);
+    setActiveSubsection(''); // Clear subsection when switching sections
+  };
   
-  // Function to render content with headings, lists, code blocks, and equations
-  const renderContent = (content) => {{
-    if (!content) return null;
-    
-    // Split content into paragraphs
-    const paragraphs = content.split('\\n\\n');
-    
-    return paragraphs.map((paragraph, idx) => {{
-      // Check if it's a heading with #
-      if (paragraph.startsWith('# ')) {{
-        const headingText = paragraph.substring(2);
-        return (
-          <h2 id={{`heading-${{idx}}`}} key={{idx}} className="text-xl font-bold mt-6 mb-3 text-gray-800 dark:text-gray-200">
-            {{headingText}}
-          </h2>
-        );
-      }} 
-      // Check if it's a subheading with ##
-      else if (paragraph.startsWith('## ')) {{
-        const headingText = paragraph.substring(3);
-        return (
-          <h3 id={{`subheading-${{idx}}`}} key={{idx}} className="text-lg font-semibold mt-5 mb-2 text-gray-700 dark:text-gray-300">
-            {{headingText}}
-          </h3>
-        );
-      }}
-      // Check if it's a list
-      else if (paragraph.match(/^[*-] /m)) {{
-        const listItems = paragraph.split(/\\n[*-] /);
-        return (
-          <ul key={{idx}} className="list-disc pl-6 mb-4 text-gray-700 dark:text-gray-300">
-            {{listItems.map((item, i) => {{
-              // First item might still have the bullet
-              const cleanItem = i === 0 ? item.replace(/^[*-] /, '') : item;
-              return <li key={{i}} className="mb-1 math-content">{{cleanItem}}</li>;
-            }})}}
-          </ul>
-        );
-      }}
-      // Check if it's a code block
-      else if (paragraph.startsWith('```') && paragraph.endsWith('```')) {{
-        const langMatch = paragraph.match(/^```(\\w+)/);
-        const language = langMatch ? langMatch[1] : '';
-        const code = paragraph.substring(3 + language.length, paragraph.length - 3);
-        
-        return (
-          <div key={{idx}} className="bg-gray-100 dark:bg-gray-800/50 rounded-md p-3 my-4 overflow-x-auto font-mono text-sm">
-            {{language && (
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-sans">{{language}}</div>
-            )}}
-            <pre>{{code}}</pre>
-          </div>
-        );
-      }}
-      // Regular paragraph with math support
-      else {{
-        return (
-          <p key={{idx}} className="mb-4 text-gray-700 dark:text-gray-300 math-content leading-relaxed">
-            {{paragraph}}
-          </p>
-        );
-      }}
-    }});
-  }};
+  const handleSubsectionClick = (subsectionId: string) => {
+    setActiveSubsection(activeSubsection === subsectionId ? '' : subsectionId);
+  };
   
+  // Get relevant images for current section
+  const getRelevantImages = (pageNumber: number | undefined): ImageData[] => {
+    if (!pageNumber || !imagesData || !Array.isArray(imagesData)) return [];
+    return imagesData.filter(img => img.page === pageNumber);
+  };
+  
+  const relevantImages = getRelevantImages(currentSection?.page_number);
+  
+  // Get citations for current section
+  const getSectionCitations = (sectionCitations?: string[]): string[] => {
+    if (!sectionCitations || !Array.isArray(sectionCitations)) return [];
+    return sectionCitations;
+  };
+  
+  const sectionCitations = getSectionCitations(currentSection?.citations);
+
+  // Handle citation click
+  const handleCitationClick = (citation: string) => {
+    if (isYouTubeUrl(citation)) {
+      const videoId = getYouTubeVideoId(citation);
+      if (videoId) {
+        setYoutubeModal({ isOpen: true, videoId });
+        return;
+      }
+    }
+    // For non-YouTube links, open in new tab
+    window.open(citation, '_blank', 'noopener,noreferrer');
+  };
+
   return (
-    <>
-      <KatexCSS />
-      <Script
-        src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"
-        integrity="sha384-cpW21h6RZv/phavutF+AuVYrr+dA8xD9zs6FwLpaCct6O9ctzYFfFr4dgmgccOTx"
-        crossOrigin="anonymous"
-        strategy="afterInteractive"
-      />
-      <Script
-        src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"
-        integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05"
-        crossOrigin="anonymous"
-        strategy="afterInteractive"
-      />
-
-      <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900">
-        {{/* Header */}}
-        <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 py-2 px-4">
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Link 
-                href="/" 
-                className="flex items-center text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
-              >
-                <ArrowLeft className="w-4 h-4 mr-1" />
-                <span className="font-medium">DeepRxiv</span>
-              </Link>
-              
-              <div className="text-sm text-gray-500 dark:text-gray-400 hidden md:block">
-                {{paperData.arxiv_id}}
-              </div>
-            </div>
-            
+    <div className="min-h-screen flex flex-col bg-white">
+      {/* Header */}
+      <header className="bg-white sticky top-0 z-50 border-b border-gray-200">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-3">
-              <a 
-                href={{`https://arxiv.org/abs/${{paperData.arxiv_id}}`}}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 text-sm"
-              >
-                <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                <span>arXiv</span>
-              </a>
-              
-              <a 
-                href={{`https://arxiv.org/pdf/${{paperData.arxiv_id}}.pdf`}}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 text-sm"
-              >
-                <Download className="w-3.5 h-3.5 mr-1" />
-                <span>PDF</span>
-              </a>
-              
-              <button 
-                onClick={{() => setSidebarOpen(!sidebarOpen)}}
-                className="md:hidden inline-flex items-center text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 text-sm"
-              >
-                <Menu className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <div className="flex flex-1 overflow-hidden">
-          {{/* Left sidebar with sections - collapsible on mobile */}}
-          <div className={{`${{sidebarOpen ? 'block' : 'hidden'}} md:block w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 overflow-y-auto`}}>
-            <div className="py-6 px-4">
-              <div className="mb-6">
-                <h3 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-3">Paper Info</h3>
-                
-                <div className="space-y-2">
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    arXiv ID: {{paperData.arxiv_id}}
-                  </div>
-                  
-                  {{paperData.authors && (
-                    <div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">Authors</div>
-                      <div className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
-                        {{paperData.authors}}
-                      </div>
-                    </div>
-                  )}}
-                </div>
-              </div>
-              
-              <h3 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-3">Sections</h3>
-              <nav className="space-y-1">
-                {{sectionsData.map(section => (
-                  <div key={{section.id}} className="mb-2">
-                    <div className="flex items-start">
-                      <button
-                        onClick={{() => toggleSectionExpand(section.id)}}
-                        className="mr-1 mt-1.5 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
-                      >
-                        {{expandedSections[section.id] ? (
-                          <ChevronDown className="w-3 h-3" />
-                        ) : (
-                          <ChevronRight className="w-3 h-3" />
-                        )}}
-                      </button>
-                      
-                      <button
-                        onClick={{() => {{
-                          setActiveSection(section.id);
-                          setActiveSubsection(null);
-                        }}}}
-                        className={{`flex w-full items-center py-1.5 text-sm font-medium rounded-md ${{
-                          activeSection === section.id && !activeSubsection
-                            ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-semibold'
-                            : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                        }}`}}
-                      >
-                        {{section.title}}
-                      </button>
-                    </div>
-                    
-                    {{/* Subsections */}}
-                    {{expandedSections[section.id] && section.subsections && section.subsections.length > 0 && (
-                      <div className="pl-6 mt-1 space-y-1">
-                        {{section.subsections.map(subsection => (
-                          <button
-                            key={{subsection.id}}
-                            onClick={{() => {{
-                              setActiveSection(section.id);
-                              setActiveSubsection(subsection.id);
-                            }}}}
-                            className={{`flex w-full items-center pl-2 py-1 text-xs font-medium rounded-md ${{
-                              activeSection === section.id && activeSubsection === subsection.id
-                                ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                            }}`}}
-                          >
-                            <ChevronRight className="w-3 h-3 mr-1 opacity-70" />
-                            {{subsection.title}}
-                          </button>
-                        ))}}
-                      </div>
-                    )}}
-                  </div>
-                ))}}
-              </nav>
-            </div>
-          </div>
-
-          {{/* Main content */}}
-          <div className="flex-1 overflow-auto">
-            {{/* Paper header */}}
-            <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 py-6">
-              <div className="max-w-4xl mx-auto px-4">
-                <h1 className="text-2xl sm:text-3xl font-bold leading-tight mb-5 text-gray-900 dark:text-white math-content">
-                  {{paperData.title}}
-                </h1>
-                
-                {{paperData.abstract && (
-                  <div className="mb-4 bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700 rounded-lg p-4">
-                    <h2 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-2">Abstract</h2>
-                    <p className="text-sm text-gray-700 dark:text-gray-300 math-content leading-relaxed">
-                      {{paperData.abstract}}
-                    </p>
-                  </div>
-                )}}
-              </div>
-            </div>
-            
-            {{/* Section content */}}
-            <div className="py-8 px-4">
-              <div className="max-w-4xl mx-auto">
-                <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400 mb-8">
-                  <BookOpen className="w-4 h-4" />
-                  <span>
-                    {{currentSubsection 
-                      ? `${{currentSection?.title}} / ${{currentSubsection.title}}` 
-                      : currentSection?.title}}
-                  </span>
-                </div>
-                
-                <div ref={{activeSectionRef}} className="prose dark:prose-invert max-w-none">
-                  <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-5">
-                    {{currentSubsection ? currentSubsection.title : currentSection?.title}}
-                  </h2>
-                  
-                  <div className="math-content">
-                    {{renderContent(contentToDisplay)}}
-                  </div>
-                  
-                  {{renderCitations()}}
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {{/* Right sidebar with "On this page" (TOC) - desktop only */}}
-          <div className="hidden lg:block w-56 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 overflow-y-auto">
-            <div className="py-6 px-4">
-              <h3 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-3">On this page</h3>
-              <nav className="space-y-1">
-                <button
-                  onClick={{() => {{
-                    activeSectionRef.current?.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-                  }}}}
-                  className="text-sm text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 block mb-2"
-                >
-                  {{currentSubsection ? currentSubsection.title : currentSection?.title}}
-                </button>
-                
-                {{/* TOC will be simpler here since we don't have the detailed content */}}
-                <div className="pl-2 border-l border-gray-200 dark:border-gray-700">
-                  <div className="space-y-1">
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {{paperData.arxiv_id}}
-                    </div>
-                  </div>
-                </div>
-              </nav>
-              
-              {{/* Metadata */}}
-              <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
-                <h3 className="text-sm uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium mb-3">Source</h3>
-                
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  <a 
-                    href={{`https://arxiv.org/abs/${{paperData.arxiv_id}}`}}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center hover:text-blue-600 dark:hover:text-blue-400"
-                  >
-                    <ExternalLink className="w-3 h-3 mr-1" />
-                    <span>arxiv.org/abs/{{paperData.arxiv_id}}</span>
-                  </a>
-                </div>
-              </div>
+              <Link href="/" className="flex items-center text-blue-600 hover:text-blue-700">
+                <ArrowLeft className="w-6 h-6" />
+              </Link>
+              <h1 className="text-2xl font-bold text-gray-800 lowercase">deeprxiv</h1>
+              <span className="text-lg text-gray-600 font-medium truncate max-w-md">
+                {paperData.title}
+              </span>
             </div>
           </div>
         </div>
-      </div>
-    </>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-grow container mx-auto px-0 py-0">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-x-0 min-h-screen">
+          {/* Left Sidebar - Navigation with Subsections */}
+          <aside className="lg:col-span-1 bg-white p-6 border-r border-gray-200">
+            <div className="sticky top-20">
+              <nav className="space-y-1">
+                {sectionsData?.map((section) => (
+                  <div key={section.id}>
+                    {/* Main Section */}
+                    <button
+                      onClick={() => handleSectionClick(section.id)}
+                      className={`block w-full text-left px-4 py-2.5 rounded-md transition-colors ${
+                        activeSection === section.id
+                          ? 'bg-blue-50 text-blue-700 font-semibold'
+                          : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{section.title}</span>
+                        {section.subsections && section.subsections.length > 0 && (
+                          <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">
+                            {section.subsections.length}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                    
+                    {/* Subsections - Show when section is active */}
+                    {activeSection === section.id && section.subsections && section.subsections.length > 0 && (
+                      <div className="ml-4 mt-1 space-y-1">
+                        {section.subsections.map((subsection, index) => (
+                          <button
+                            key={subsection.id}
+                            onClick={() => handleSubsectionClick(subsection.id)}
+                            className={`block w-full text-left px-3 py-2 rounded-md text-sm transition-colors border-l-2 ${
+                              activeSubsection === subsection.id
+                                ? 'border-blue-400 bg-blue-25 text-blue-600 font-medium'
+                                : 'border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <span className="inline-flex items-center justify-center w-5 h-5 bg-gray-100 text-gray-600 text-xs rounded-full flex-shrink-0">
+                                {index + 1}
+                              </span>
+                              <span className="truncate">{subsection.title}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </nav>
+            </div>
+          </aside>
+
+          {/* Center Content Area */}
+          <div className="lg:col-span-3 bg-white p-6">
+            {currentSection && (
+              <>
+                <h3 className="text-2xl font-semibold text-gray-800 mb-2">
+                  {currentSection.title}
+                </h3>
+                <p className="text-sm text-gray-500 mb-6">
+                  arXiv:{paperData.arxiv_id} • {paperData.authors}
+                </p>
+                
+                {/* Main Section Content */}
+                <div className="prose prose-lg max-w-none text-gray-700 leading-relaxed">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
+                    className="prose prose-gray max-w-none"
+                    components={{
+                      // Custom rendering for better LaTeX support
+                      p: ({ children }) => <p className="mb-4 leading-relaxed">{children}</p>,
+                      h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 text-gray-900">{children}</h1>,
+                      h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 text-gray-800">{children}</h2>,
+                      h3: ({ children }) => <h3 className="text-lg font-medium mb-2 text-gray-700">{children}</h3>,
+                      code: ({ inline, children }) => 
+                        inline ? (
+                          <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">
+                            {children}
+                          </code>
+                        ) : (
+                          <pre className="bg-gray-50 p-4 rounded-lg overflow-x-auto">
+                            <code className="text-sm font-mono text-gray-800">{children}</code>
+                          </pre>
+                        )
+                    }}
+                  >
+                    {currentSection.content}
+                  </ReactMarkdown>
+                </div>
+                
+                {/* Active Subsection Content */}
+                {activeSubsection && currentSubsection && (
+                  <div className="mt-8 border-t border-gray-200 pt-6">
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-6 rounded-r-lg">
+                      <div className="flex items-center space-x-2 mb-4">
+                        <span className="inline-flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">
+                          {currentSection.subsections?.findIndex(sub => sub.id === activeSubsection) + 1}
+                        </span>
+                        <h4 className="text-xl font-semibold text-blue-700">
+                          {currentSubsection.title}
+                        </h4>
+                      </div>
+                      {currentSubsection.page_number && (
+                        <p className="text-sm text-blue-600 mb-4">
+                          Page {currentSubsection.page_number}
+                        </p>
+                      )}
+                      <div className="prose prose-lg max-w-none text-gray-700 leading-relaxed">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm, remarkMath]}
+                          rehypePlugins={[rehypeKatex]}
+                          className="prose prose-gray max-w-none"
+                          components={{
+                            p: ({ children }) => <p className="mb-4 leading-relaxed">{children}</p>,
+                            h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 text-gray-900">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 text-gray-800">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-lg font-medium mb-2 text-gray-700">{children}</h3>,
+                            code: ({ inline, children }) => 
+                              inline ? (
+                                <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">
+                                  {children}
+                                </code>
+                              ) : (
+                                <pre className="bg-gray-50 p-4 rounded-lg overflow-x-auto">
+                                  <code className="text-sm font-mono text-gray-800">{children}</code>
+                                </pre>
+                              )
+                          }}
+                        >
+                          {currentSubsection.content}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* All Subsections Overview (when no specific subsection is selected) */}
+                {!activeSubsection && currentSection.subsections && currentSection.subsections.length > 0 && (
+                  <div className="mt-8 space-y-6">
+                    <div className="border-t border-gray-200 pt-6">
+                      <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                        <BookOpen className="w-5 h-5 mr-2 text-blue-600" />
+                        Detailed Exploration
+                      </h3>
+                      <p className="text-sm text-gray-600 mb-4">
+                        Click on any subsection in the sidebar to explore in detail, or browse the overview below.
+                      </p>
+                    </div>
+                    {currentSection.subsections.map((subsection, index) => (
+                      <div 
+                        key={subsection.id || index} 
+                        className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+                        onClick={() => handleSubsectionClick(subsection.id)}
+                      >
+                        <div className="flex items-center space-x-2 mb-2">
+                          <span className="inline-flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">
+                            {index + 1}
+                          </span>
+                          <h4 className="text-lg font-semibold text-gray-800">
+                            {subsection.title}
+                          </h4>
+                          <ChevronRight className="w-4 h-4 text-gray-400 ml-auto" />
+                        </div>
+                        {subsection.page_number && (
+                          <p className="text-sm text-gray-500 mb-2 ml-8">
+                            Page {subsection.page_number}
+                          </p>
+                        )}
+                        <div className="text-sm text-gray-600 ml-8 line-clamp-3">
+                          {subsection.content.substring(0, 200)}...
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Right Sidebar - Images and Sources */}
+          <aside className="lg:col-span-1 bg-white p-6 border-l border-gray-200">
+            <div className="sticky top-20">
+              {/* Tab Buttons */}
+              <div className="flex mb-4 border-b border-gray-200">
+                <button
+                  onClick={() => setActiveTab('images')}
+                  className={`flex-1 py-2 px-4 text-center font-medium transition-colors border-b-2 ${
+                    activeTab === 'images'
+                      ? 'text-blue-700 border-blue-700 font-semibold'
+                      : 'text-gray-600 border-transparent hover:text-gray-800'
+                  }`}
+                >
+                  <ImageIcon className="inline-block w-4 h-4 mr-1" />
+                  Images
+                </button>
+                <button
+                  onClick={() => setActiveTab('sources')}
+                  className={`flex-1 py-2 px-4 text-center font-medium transition-colors border-b-2 ${
+                    activeTab === 'sources'
+                      ? 'text-blue-700 border-blue-700 font-semibold'
+                      : 'text-gray-600 border-transparent hover:text-gray-800'
+                  }`}
+                >
+                  <ExternalLink className="inline-block w-4 h-4 mr-1" />
+                  Sources
+                </button>
+              </div>
+
+              {/* Images Tab Content */}
+              {activeTab === 'images' && (
+                <div>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Figures and tables related to the current section.
+                  </p>
+                  {imagesLoading ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                      <p className="text-sm text-gray-500 mt-2">Loading images...</p>
+                    </div>
+                  ) : relevantImages.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      {relevantImages.map((image, index) => (
+                        <div
+                          key={image.id || index}
+                          className="aspect-square bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer hover:bg-gray-300 transition-colors overflow-hidden group"
+                          onClick={() => setSelectedImage(image)}
+                        >
+                          <img
+                            src={image.url || `/api/image/${image.id}`}
+                            alt={`Figure ${index + 1}`}
+                            className="max-w-full max-h-full object-contain p-2 group-hover:scale-105 transition-transform"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                      <p className="text-sm text-gray-500">No images for this section</p>
+                    </div>
+                  )}
+                  {relevantImages.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-2 text-center">
+                      Click on an image to enlarge.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Sources Tab Content */}
+              {activeTab === 'sources' && (
+                <div>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Citations and references mentioned in this section.
+                  </p>
+                  {sectionCitations.length > 0 ? (
+                    <div className="space-y-3">
+                      {sectionCitations.map((citation, index) => (
+                        <div
+                          key={index}
+                          className="bg-gray-50 p-3 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
+                        >
+                          <div className="flex items-start space-x-2">
+                            <span className="inline-flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full flex-shrink-0 mt-0.5">
+                              {index + 1}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-800 mb-1">
+                                Reference {index + 1}
+                              </p>
+                              <p className="text-xs text-gray-600 break-words">
+                                {citation}
+                              </p>
+                              <button
+                                onClick={() => handleCitationClick(citation)}
+                                className="inline-flex items-center text-xs text-blue-600 hover:text-blue-800 hover:underline mt-2"
+                              >
+                                {isYouTubeUrl(citation) ? (
+                                  <Play className="w-3 h-3 mr-1" />
+                                ) : (
+                                  <ExternalLink className="w-3 h-3 mr-1" />
+                                )}
+                                {isYouTubeUrl(citation) ? 'Watch Video' : 'View Source'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <ExternalLink className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                      <p className="text-sm text-gray-500">No citations for this section</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </aside>
+        </div>
+      </main>
+
+      {/* Image Modal */}
+      {selectedImage && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="relative max-w-4xl max-h-full">
+            <button
+              onClick={() => setSelectedImage(null)}
+              className="absolute top-4 right-4 text-white hover:text-gray-300 z-10"
+            >
+              <X className="w-8 h-8" />
+            </button>
+            <img
+              src={selectedImage.url || `/api/image/${selectedImage.id}`}
+              alt="Enlarged figure"
+              className="max-w-full max-h-full object-contain"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* YouTube Modal */}
+      {youtubeModal.isOpen && youtubeModal.videoId && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="relative bg-white rounded-lg max-w-4xl w-full max-h-full">
+            <button
+              onClick={() => setYoutubeModal({ isOpen: false, videoId: null })}
+              className="absolute top-4 right-4 text-gray-600 hover:text-gray-800 z-10"
+            >
+              <X className="w-8 h-8" />
+            </button>
+            <div className="p-4">
+              <iframe
+                width="100%"
+                height="480"
+                src={`https://www.youtube.com/embed/${youtubeModal.videoId}`}
+                title="YouTube video player"
+                frameBorder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="rounded-lg"
+              ></iframe>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
-}}
+}
 """
         with open(os.path.join(paper_folder, "page.tsx"), "w", encoding="utf-8") as f:
             f.write(page_content)
@@ -935,6 +1125,8 @@ export default function PaperPage() {{
         print(f"Successfully created Next.js folder structure for paper {paper.arxiv_id}")
     except Exception as e:
         print(f"Error creating Next.js folder structure for paper {paper.arxiv_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 @app.get("/api/paper/{arxiv_id}", response_model=PaperDetailResponse)
 async def get_paper(arxiv_id: str, db: Session = Depends(get_db)):
