@@ -23,6 +23,12 @@ class LLMService:
         Makes a call to the Perplexity API with the given prompt.
         Returns the response text and citations.
         """
+        print(f"\n🚀 PERPLEXITY API CALL")
+        print(f"Model: {self.model}")
+        print(f"System prompt: {system_prompt[:100]}...")
+        print(f"User prompt length: {len(prompt)} characters")
+        print(f"User prompt preview: {prompt[:200]}...")
+        
         headers = {
             "Authorization": f"Bearer {self.perplexity_api_key}",
             "Content-Type": "application/json"
@@ -43,6 +49,7 @@ class LLMService:
         }
         
         try:
+            print(f"📡 Sending request to Perplexity...")
             response = requests.post(self.api_url, json=payload, headers=headers)
             response.raise_for_status()
             
@@ -52,14 +59,21 @@ class LLMService:
             # Extract citations if available
             citations = response_data.get("citations", [])
             
+            print(f"✅ Perplexity response received:")
+            print(f"Content length: {len(content)} characters")
+            print(f"Citations count: {len(citations)}")
+            print(f"Response preview: {content[:300]}...")
+            
             return {
                 "content": content,
                 "citations": citations
             }
         except Exception as e:
-            print(f"Error calling Perplexity API: {str(e)}")
-            if response and hasattr(response, 'text'):
+            print(f"❌ Error calling Perplexity API: {str(e)}")
+            if 'response' in locals() and hasattr(response, 'text'):
                 print(f"Response text: {response.text}")
+            if 'response' in locals() and hasattr(response, 'status_code'):
+                print(f"Status code: {response.status_code}")
             return {
                 "content": f"Error: {str(e)}",
                 "citations": []

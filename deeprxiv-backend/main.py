@@ -22,7 +22,7 @@ from google.genai.types import EmbedContentConfig
 # Load environment variables
 load_dotenv('.env.local')
 
-from database import get_db, Paper, create_tables
+from database import get_db, Paper, User, ChatSession, ChatMessage, create_tables
 from pdf_processor import PDFProcessor
 from llm_service import LLMService
 
@@ -105,21 +105,71 @@ class EmbeddingRequest(BaseModel):
 class TestPerplexityRequest(BaseModel):
     prompt: str = "How does RLHF work?"
 
+# Chat Models
+class ChatCreateRequest(BaseModel):
+    paper_id: Optional[int] = None
+    arxiv_id: Optional[str] = None
+    title: Optional[str] = None
+    is_public: bool = True
+    user_id: Optional[int] = None
+
+class ChatMessageRequest(BaseModel):
+    session_id: str
+    message: str
+    content_chunks: int = 3
+    section_chunks: int = 3
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    role: str
+    content: str
+    sources: Optional[List[dict]] = None
+    highlighted_images: Optional[List[dict]] = None
+    thumbs_up: Optional[bool] = None
+    thumbs_down: Optional[bool] = None
+    created_at: datetime
+
+class ChatSessionResponse(BaseModel):
+    id: int
+    session_id: str
+    title: Optional[str]
+    paper_id: Optional[int]
+    paper_title: Optional[str]
+    arxiv_id: Optional[str]
+    is_public: bool
+    share_url: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    messages: List[ChatMessageResponse]
+
+class ChatFeedbackRequest(BaseModel):
+    message_id: int
+    thumbs_up: Optional[bool] = None
+    thumbs_down: Optional[bool] = None
+    suggested_answer: Optional[str] = None
+
 # Track progress for each paper
 paper_processing_status = {}
 
 def get_embedding(text: str, title="DeepRxiv Paper"):
     """Generate embeddings using Google's text-embedding-004 model."""
-    response = embedding_client.models.embed_content(
-        model="models/text-embedding-004",
-        contents=text,
-        config=EmbedContentConfig(
-            task_type="RETRIEVAL_DOCUMENT",
-            output_dimensionality=768,
-            title=title,
-        ),
-    )
-    return response.embeddings[0].values
+    try:
+        print(f"🔤 Generating embedding for text: '{text[:100]}...' (title: {title})")
+        response = embedding_client.models.embed_content(
+            model="models/text-embedding-004",
+            contents=text,
+            config=EmbedContentConfig(
+                task_type="RETRIEVAL_DOCUMENT",
+                output_dimensionality=768,
+                title=title,
+            ),
+        )
+        embedding_values = response.embeddings[0].values
+        print(f"✅ Generated embedding with {len(embedding_values)} dimensions")
+        return embedding_values
+    except Exception as e:
+        print(f"❌ Error generating embedding: {str(e)}")
+        raise
 
 def split_content_by_tokens(content, max_tokens=2000, chars_per_token=4):
     """Fast and reliable content chunking by character count."""
@@ -1578,6 +1628,7 @@ async def list_papers(db: Session = Depends(get_db)):
     response_data = []
     for paper in papers:
         paper_data = {
+            "id": paper.id,  # Add the missing id field
             "arxiv_id": paper.arxiv_id,
             "title": paper.title or f"Paper {paper.arxiv_id}",
             "authors": paper.authors or "Unknown authors",
@@ -1585,7 +1636,7 @@ async def list_papers(db: Session = Depends(get_db)):
             "processed": paper.processed
         }
         response_data.append(paper_data)
-        print(f"Paper {paper.arxiv_id}: {paper_data['title']} - Processed: {paper.processed}")
+        print(f"Paper {paper.id} ({paper.arxiv_id}): {paper_data['title']} - Processed: {paper.processed}")
     
     return response_data
 
@@ -1933,6 +1984,473 @@ async def get_collection_stats(arxiv_id: str):
     
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Collection for paper {arxiv_id} not found")
+
+# Chat Endpoints
+
+@app.post("/api/chat/create", response_model=ChatSessionResponse)
+async def create_chat_session(request: ChatCreateRequest, db: Session = Depends(get_db)):
+    """Create a new chat session."""
+    try:
+        # Find or create paper if arxiv_id is provided
+        paper = None
+        if request.arxiv_id:
+            paper = db.query(Paper).filter(Paper.arxiv_id == request.arxiv_id).first()
+            if not paper:
+                raise HTTPException(status_code=404, detail=f"Paper {request.arxiv_id} not found")
+        elif request.paper_id:
+            paper = db.query(Paper).filter(Paper.id == request.paper_id).first()
+            if not paper:
+                raise HTTPException(status_code=404, detail=f"Paper with ID {request.paper_id} not found")
+
+        # Create or get user
+        user = None
+        if request.user_id:
+            user = db.query(User).filter(User.id == request.user_id).first()
+            if not user:
+                raise HTTPException(status_code=404, detail=f"User with ID {request.user_id} not found")
+
+        # Generate share URL if public
+        share_url = None
+        if request.is_public:
+            share_url = str(uuid.uuid4())
+
+        # Create chat session
+        session = ChatSession(
+            title=request.title or (f"Chat about {paper.title}" if paper else "New Chat"),
+            paper_id=paper.id if paper else None,
+            user_id=user.id if user else None,
+            is_public=request.is_public,
+            share_url=share_url
+        )
+
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+
+        return ChatSessionResponse(
+            id=session.id,
+            session_id=session.session_id,
+            title=session.title,
+            paper_id=session.paper_id,
+            paper_title=paper.title if paper else None,
+            arxiv_id=paper.arxiv_id if paper else None,
+            is_public=session.is_public,
+            share_url=session.share_url,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+            messages=[]
+        )
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/chat/sessions")
+async def get_user_chat_sessions(user_id: Optional[int] = None, include_public: bool = True, db: Session = Depends(get_db)):
+    """Get chat sessions for a user or public sessions."""
+    query = db.query(ChatSession)
+    
+    if user_id:
+        if include_public:
+            query = query.filter((ChatSession.user_id == user_id) | (ChatSession.is_public == True))
+        else:
+            query = query.filter(ChatSession.user_id == user_id)
+    else:
+        query = query.filter(ChatSession.is_public == True)
+    
+    sessions = query.order_by(ChatSession.updated_at.desc()).limit(50).all()
+    
+    # Convert to response format
+    session_responses = []
+    for session in sessions:
+        paper = None
+        if session.paper_id:
+            paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
+        
+        session_responses.append({
+            "id": session.id,
+            "session_id": session.session_id,
+            "title": session.title,
+            "paper_id": session.paper_id,
+            "paper_title": paper.title if paper else None,
+            "arxiv_id": paper.arxiv_id if paper else None,
+            "is_public": session.is_public,
+            "share_url": session.share_url,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+            "message_count": len(session.messages)
+        })
+    
+    return session_responses
+
+@app.get("/api/chat/{session_id}", response_model=ChatSessionResponse)
+async def get_chat_session(session_id: str, db: Session = Depends(get_db)):
+    """Get a chat session by ID."""
+    session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    
+    # Get messages
+    messages = db.query(ChatMessage).filter(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at).all()
+    
+    # Convert messages to response format
+    message_responses = []
+    for msg in messages:
+        sources = json.loads(msg.sources) if msg.sources else None
+        highlighted_images = json.loads(msg.highlighted_images) if msg.highlighted_images else None
+        
+        message_responses.append(ChatMessageResponse(
+            id=msg.id,
+            role=msg.role,
+            content=msg.content,
+            sources=sources,
+            highlighted_images=highlighted_images,
+            thumbs_up=msg.thumbs_up,
+            thumbs_down=msg.thumbs_down,
+            created_at=msg.created_at
+        ))
+
+    # Get paper info if available
+    paper = None
+    if session.paper_id:
+        paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
+
+    return ChatSessionResponse(
+        id=session.id,
+        session_id=session.session_id,
+        title=session.title,
+        paper_id=session.paper_id,
+        paper_title=paper.title if paper else None,
+        arxiv_id=paper.arxiv_id if paper else None,
+        is_public=session.is_public,
+        share_url=session.share_url,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+        messages=message_responses
+    )
+
+@app.post("/api/chat/message")
+async def send_chat_message(request: ChatMessageRequest, db: Session = Depends(get_db)):
+    """Send a message in a chat session."""
+    try:
+        print(f"\n=== CHAT MESSAGE REQUEST ===")
+        print(f"Session ID: {request.session_id}")
+        print(f"Message: {request.message}")
+        print(f"Content chunks: {request.content_chunks}")
+        print(f"Section chunks: {request.section_chunks}")
+        
+        # Get chat session
+        session = db.query(ChatSession).filter(ChatSession.session_id == request.session_id).first()
+        if not session:
+            print(f"❌ Chat session not found: {request.session_id}")
+            raise HTTPException(status_code=404, detail="Chat session not found")
+
+        print(f"✅ Found session: {session.title}")
+        print(f"Session paper_id: {session.paper_id}")
+        
+        # Get paper info if available
+        paper_info = None
+        if session.paper_id:
+            paper_info = db.query(Paper).filter(Paper.id == session.paper_id).first()
+            print(f"Session arxiv_id: {paper_info.arxiv_id if paper_info else 'None'}")
+        else:
+            print(f"Session arxiv_id: None (no paper selected)")
+
+        # Save user message
+        user_message = ChatMessage(
+            session_id=session.id,
+            role="user",
+            content=request.message
+        )
+        db.add(user_message)
+        db.commit()
+        db.refresh(user_message)
+        print(f"✅ Saved user message with ID: {user_message.id}")
+
+        # Generate response using RAG if paper is available
+        if session.paper_id:
+            print(f"\n🔍 USING RAG MODE - Paper ID: {session.paper_id}")
+            paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
+            if paper and paper.processed:
+                print(f"✅ Found processed paper: {paper.arxiv_id} - {paper.title}")
+                print(f"Paper processed status: {paper.processed}")
+                
+                # Use existing query logic
+                query_request = QueryRequest(
+                    query=request.message,
+                    arxiv_id=paper.arxiv_id,
+                    content_chunks=request.content_chunks,
+                    section_chunks=request.section_chunks
+                )
+                
+                # Get RAG response
+                try:
+                    print(f"\n📊 STARTING RAG PROCESS...")
+                    
+                    # Get query embedding
+                    print(f"🔤 Getting embedding for query: '{request.message[:100]}...'")
+                    query_embedding = get_embedding(request.message, title=f"Query for paper {paper.arxiv_id}")
+                    print(f"✅ Generated embedding with dimension: {len(query_embedding) if query_embedding else 'None'}")
+                    
+                    # Get the paper's collection
+                    collection_name = f"paper_{paper.arxiv_id}"
+                    print(f"🗂️  Getting collection: {collection_name}")
+                    collection = chroma_client.get_collection(name=collection_name)
+                    collection_count = collection.count()
+                    print(f"✅ Collection found with {collection_count} documents")
+                    
+                    # Query the collection
+                    total_results = max(request.content_chunks + request.section_chunks * 2, 20)
+                    print(f"🔍 Querying collection for {total_results} results...")
+                    results = collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=total_results,
+                        include=['documents', 'metadatas', 'distances']
+                    )
+                    
+                    result_count = len(results['documents'][0]) if results['documents'] and results['documents'][0] else 0
+                    print(f"✅ Retrieved {result_count} results from vector search")
+                    
+                    # Separate results by content type
+                    content_results = []
+                    section_results = []
+                    
+                    print(f"\n📋 PROCESSING SEARCH RESULTS...")
+                    if results['documents'] and results['documents'][0]:
+                        for i in range(len(results['documents'][0])):
+                            result = {
+                                'document': results['documents'][0][i],
+                                'metadata': results['metadatas'][0][i],
+                                'similarity_score': 1 - results['distances'][0][i]
+                            }
+                            
+                            content_type = result['metadata'].get('type', 'content')
+                            similarity_pct = result['similarity_score'] * 100
+                            
+                            if content_type == 'content':
+                                content_results.append(result)
+                                print(f"  📄 Content chunk {len(content_results)}: {similarity_pct:.1f}% similarity")
+                            elif content_type in ['section', 'subsection']:
+                                section_results.append(result)
+                                section_title = result['metadata'].get('section_title', 'Unknown')
+                                print(f"  📑 Section '{section_title}': {similarity_pct:.1f}% similarity")
+                    
+                    # Limit results
+                    original_content_count = len(content_results)
+                    original_section_count = len(section_results)
+                    content_results = content_results[:request.content_chunks]
+                    section_results = section_results[:request.section_chunks]
+                    
+                    print(f"📊 Results filtered: {len(content_results)}/{original_content_count} content, {len(section_results)}/{original_section_count} sections")
+                    
+                    # Format context for LLM
+                    context_content = ""
+                    sources = []
+                    highlighted_pages = []
+                    
+                    # Add content chunks
+                    if content_results:
+                        context_content += "\n=== RAW EXTRACTED TEXT ===\n"
+                        for idx, result in enumerate(content_results):
+                            metadata = result['metadata']
+                            chunk_index = int(metadata.get('chunk_index', idx))
+                            
+                            context_content += f"\n[C{idx + 1}] Raw Content Chunk {chunk_index + 1}:\n{result['document']}\n"
+                            sources.append({
+                                'index': f"C{idx + 1}",
+                                'type': 'content',
+                                'title': f'Raw Content Chunk {chunk_index + 1}',
+                                'chunk_index': chunk_index,
+                                'similarity_score': result['similarity_score'],
+                                'text': result['document']
+                            })
+                            
+                            highlighted_pages.append({
+                                'type': 'content',
+                                'chunk_index': chunk_index,
+                                'text': result['document'],
+                                'similarity_score': result['similarity_score']
+                            })
+                    
+                    # Add section chunks
+                    if section_results:
+                        context_content += "\n=== STRUCTURED SECTIONS ===\n"
+                        for idx, result in enumerate(section_results):
+                            metadata = result['metadata']
+                            content_type = metadata.get('type', 'section')
+                            
+                            if content_type == 'section':
+                                source_info = f"Section: {metadata.get('section_title', 'Unknown')}"
+                                if metadata.get('page_number'):
+                                    source_info += f" (Page {metadata.get('page_number')})"
+                            elif content_type == 'subsection':
+                                source_info = f"Subsection: {metadata.get('subsection_title', 'Unknown')} (under {metadata.get('section_title', 'Unknown')})"
+                                if metadata.get('page_number'):
+                                    source_info += f" (Page {metadata.get('page_number')})"
+                            
+                            context_content += f"\n[S{idx + 1}] {source_info}:\n{result['document']}\n"
+                            sources.append({
+                                'index': f"S{idx + 1}",
+                                'type': content_type,
+                                'title': metadata.get('section_title') or metadata.get('subsection_title', 'Section'),
+                                'page_number': metadata.get('page_number'),
+                                'similarity_score': result['similarity_score']
+                            })
+
+                    print(f"\n🧠 PREPARING CONTEXT FOR LLM...")
+                    print(f"Context length: {len(context_content)} characters")
+                    print(f"Sources prepared: {len(sources)}")
+                    
+                    # Generate answer using Perplexity
+                    answer_prompt = f"""You are a helpful research assistant. Answer the user's question about this academic paper based on the provided context.
+
+User Question: {request.message}
+
+Context from Paper {paper.arxiv_id}:
+{context_content}
+
+Instructions:
+1. Answer the question directly and accurately based on the provided context
+2. Use specific information from both raw content (C1, C2, etc.) and structured sections (S1, S2, etc.)
+3. Include relevant citations using [C1], [S2], etc. format referring to the numbered sources
+4. When referencing raw content, explain that it comes from the original extracted text
+5. When referencing sections, mention they are from the structured analysis
+6. If the context doesn't contain enough information to answer the question, say so clearly
+7. Keep your answer focused and concise while being informative
+8. Use technical language appropriate for the academic content
+
+Answer:"""
+
+                    print(f"🤖 CALLING PERPLEXITY API...")
+                    print(f"Prompt length: {len(answer_prompt)} characters")
+                    
+                    # Use Gemini Flash to summarize and generate response
+                    system_prompt = "You are a helpful research assistant specializing in academic paper analysis. Provide accurate, well-sourced answers that distinguish between raw extracted text and structured sections."
+                    perplexity_result = llm_service._call_perplexity_api(answer_prompt, system_prompt)
+                    answer = perplexity_result["content"]
+                    
+                    print(f"✅ Received response from Perplexity:")
+                    print(f"Response length: {len(answer)} characters")
+                    print(f"First 200 chars: {answer[:200]}...")
+
+                    # Generate highlighted images if we have content results
+                    highlighted_images = []
+                    if highlighted_pages:
+                        try:
+                            highlighted_images = pdf_processor.generate_page_highlights_for_query(
+                                paper.pdf_data, 
+                                highlighted_pages
+                            )
+                            # Add URLs for serving the highlighted images
+                            for img in highlighted_images:
+                                img['url'] = f"/api/highlighted-image/{img['id']}"
+                        except Exception as highlight_error:
+                            print(f"Error generating highlighted images: {str(highlight_error)}")
+
+                except Exception as rag_error:
+                    print(f"❌ Error in RAG processing: {str(rag_error)}")
+                    import traceback
+                    traceback.print_exc()
+                    answer = "I encountered an error while processing your question. Please try again."
+                    sources = []
+                    highlighted_images = []
+            else:
+                if paper:
+                    print(f"❌ Paper exists but not processed: {paper.arxiv_id}")
+                    print(f"Paper processed status: {paper.processed}")
+                else:
+                    print(f"❌ Paper not found for session paper_id: {session.paper_id}")
+                answer = "I don't have access to processed content for this paper yet. Please ensure the paper has been fully processed."
+                sources = []
+                highlighted_images = []
+        else:
+            print(f"\n💬 USING GENERAL MODE - No paper selected")
+            # Generate general response using Perplexity without RAG
+            try:
+                print(f"🤖 CALLING PERPLEXITY API (General mode)...")
+                system_prompt = "You are a helpful research assistant. Provide accurate, informative answers to research questions."
+                perplexity_result = llm_service._call_perplexity_api(request.message, system_prompt)
+                answer = perplexity_result["content"]
+                print(f"✅ Received general response from Perplexity")
+                print(f"Response length: {len(answer)} characters")
+                sources = []
+                highlighted_images = []
+            except Exception as llm_error:
+                print(f"❌ Error generating LLM response: {str(llm_error)}")
+                answer = "I encountered an error while generating a response. Please try again."
+                sources = []
+                highlighted_images = []
+
+        # Save assistant message
+        assistant_message = ChatMessage(
+            session_id=session.id,
+            role="assistant",
+            content=answer,
+            sources=json.dumps(sources) if sources else None,
+            highlighted_images=json.dumps(highlighted_images) if highlighted_images else None
+        )
+        db.add(assistant_message)
+        
+        # Update session timestamp
+        session.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(assistant_message)
+
+        return {
+            "user_message": {
+                "id": user_message.id,
+                "role": "user",
+                "content": user_message.content,
+                "created_at": user_message.created_at
+            },
+            "assistant_message": {
+                "id": assistant_message.id,
+                "role": "assistant",
+                "content": assistant_message.content,
+                "sources": sources,
+                "highlighted_images": highlighted_images,
+                "created_at": assistant_message.created_at
+            }
+        }
+
+    except Exception as e:
+        db.rollback()
+        print(f"Error in chat message: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat/feedback")
+async def submit_chat_feedback(request: ChatFeedbackRequest, db: Session = Depends(get_db)):
+    """Submit feedback for a chat message."""
+    message = db.query(ChatMessage).filter(ChatMessage.id == request.message_id).first()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    # Update feedback
+    if request.thumbs_up is not None:
+        message.thumbs_up = request.thumbs_up
+        message.thumbs_down = not request.thumbs_up if request.thumbs_up else None
+    
+    if request.thumbs_down is not None:
+        message.thumbs_down = request.thumbs_down
+        message.thumbs_up = not request.thumbs_down if request.thumbs_down else None
+    
+    if request.suggested_answer:
+        message.suggested_answer = request.suggested_answer
+    
+    db.commit()
+    
+    return {"message": "Feedback submitted successfully"}
+
+@app.get("/api/chat/share/{share_url}", response_model=ChatSessionResponse)
+async def get_shared_chat(share_url: str, db: Session = Depends(get_db)):
+    """Get a shared chat session by share URL."""
+    session = db.query(ChatSession).filter(ChatSession.share_url == share_url).first()
+    if not session or not session.is_public:
+        raise HTTPException(status_code=404, detail="Shared chat not found or not public")
+    
+    # Use the existing get_chat_session logic
+    return await get_chat_session(session.session_id, db)
 
 if __name__ == "__main__":
     import uvicorn

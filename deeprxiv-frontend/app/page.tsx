@@ -140,6 +140,7 @@ export default function Home() {
             <div className="flex items-center gap-9">
               <Link href="/" className="text-[#0e141b] text-sm font-medium leading-normal">Home</Link>
               <Link href="/papers" className="text-[#0e141b] text-sm font-medium leading-normal">Papers</Link>
+              <Link href="/chat" className="text-[#0e141b] text-sm font-medium leading-normal">Chat</Link>
               <a className="text-[#0e141b] text-sm font-medium leading-normal" href="#">Features</a>
               <a className="text-[#0e141b] text-sm font-medium leading-normal" href="#">Help</a>
             </div>
