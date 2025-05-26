@@ -516,6 +516,7 @@ class LLMService:
         
         PAPER TEXT FOR REFERENCE:
         {paper_text[:30000]}
+
         
         Generate educational content that makes this section accessible and engaging while maintaining technical accuracy.
         """

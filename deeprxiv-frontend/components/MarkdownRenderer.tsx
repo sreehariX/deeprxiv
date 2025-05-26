@@ -4,7 +4,6 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import remarkSlug from 'remark-slug';
 import rehypeKatex from 'rehype-katex';
 import rehypePrism from 'rehype-prism-plus';
 import rehypeRaw from 'rehype-raw';
@@ -27,7 +26,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, sourcePage
       )}
       <div className="prose prose-invert prose-pre:bg-gray-800/80 prose-pre:border prose-pre:border-gray-700 max-w-none">
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath, remarkSlug]}
+          remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex, [rehypePrism, { ignoreMissing: true }], rehypeRaw]}
           components={{
             h1: ({ node, ...props }) => (
@@ -62,17 +61,17 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, sourcePage
                 return (
                   <div className="relative group">
                     {language && (
-                      <div className="absolute right-2 top-2 text-xs text-gray-400 bg-gray-800 px-2 py-1 rounded opacity-60">
+                      <div className="absolute right-2 top-2 text-xs text-gray-300 bg-gray-800 px-2 py-1 rounded opacity-80">
                         {language}
                       </div>
                     )}
-                    <pre className={className}>
-                      <code className={className} {...props}>
+                    <pre className={`${className} bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto`}>
+                      <code className={`${className} text-gray-100`} {...props}>
                         {children}
                       </code>
                     </pre>
                     <button 
-                      className="absolute top-2 right-12 p-1.5 rounded bg-gray-700/50 text-gray-400 opacity-0 group-hover:opacity-100 hover:bg-gray-700 hover:text-gray-200 transition-all"
+                      className="absolute top-2 right-12 p-1.5 rounded bg-gray-700/50 text-gray-300 opacity-0 group-hover:opacity-100 hover:bg-gray-700 hover:text-white transition-all"
                       onClick={() => {
                         navigator.clipboard.writeText(String(children));
                       }}
@@ -85,7 +84,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, sourcePage
               }
               
               return (
-                <code className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300" {...props}>
+                <code className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-100 font-mono" {...props}>
                   {children}
                 </code>
               );

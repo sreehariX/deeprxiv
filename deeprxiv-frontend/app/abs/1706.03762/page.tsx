@@ -2,14 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Image as ImageIcon, ExternalLink, X, Play, FileText, BookOpen } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, ExternalLink, X, Play, FileText, BookOpen, Menu } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 
-// Custom CSS for hiding scrollbars
+// Custom CSS for hiding scrollbars and responsive margins
 const customStyles = `
   .scrollbar-hide {
     -ms-overflow-style: none;  /* Internet Explorer 10+ */
@@ -17,6 +17,22 @@ const customStyles = `
   }
   .scrollbar-hide::-webkit-scrollbar {
     display: none;  /* Safari and Chrome */
+  }
+  .main-content {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  @media (min-width: 768px) {
+    .main-content {
+      margin-left: 352px;
+      margin-right: 0;
+    }
+  }
+  @media (min-width: 1024px) {
+    .main-content {
+      margin-left: 416px;
+      margin-right: 512px;
+    }
   }
 `;
 
@@ -88,23 +104,23 @@ const MarkdownContent = ({ content }: { content: string }) => {
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
-      className="prose prose-lg max-w-none text-gray-700 leading-relaxed"
+      className="prose prose-lg max-w-none text-gray-900 leading-relaxed"
       components={{
         // Custom styling for different elements
-        h1: ({ children }) => <h1 className="text-3xl font-bold text-gray-800 mb-4">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-2xl font-semibold text-gray-800 mb-3">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-xl font-medium text-gray-800 mb-2">{children}</h3>,
-        p: ({ children }) => <p className="text-gray-700 mb-4 leading-relaxed">{children}</p>,
-        ul: ({ children }) => <ul className="list-disc list-inside mb-4 text-gray-700">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal list-inside mb-4 text-gray-700">{children}</ol>,
+        h1: ({ children }) => <h1 className="text-3xl font-bold text-gray-900 mb-4">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-2xl font-semibold text-gray-900 mb-3">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-xl font-medium text-gray-900 mb-2">{children}</h3>,
+        p: ({ children }) => <p className="text-black-900 mb-4 leading-relaxed">{children}</p>,
+        ul: ({ children }) => <ul className="list-disc list-inside mb-4 text-gray-900">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal list-inside mb-4 text-gray-900">{children}</ol>,
         li: ({ children }) => <li className="mb-1">{children}</li>,
         blockquote: ({ children }) => <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-600 mb-4">{children}</blockquote>,
         code: ({ children, className }) => {
           const isInline = !className;
           if (isInline) {
-            return <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800">{children}</code>;
+            return <code className="bg-black-100 px-1 py-0.5 rounded text-sm font-mono text-gray-900">{children}</code>;
           }
-          return <pre className="bg-gray-100 p-4 rounded-lg overflow-x-auto mb-4"><code className="text-sm font-mono">{children}</code></pre>;
+          return <pre className="bg-black-100 p-4 rounded-lg overflow-x-auto mb-4"><code className="text-sm font-mono">{children}</code></pre>;
         },
         a: ({ children, href }) => <a href={href} className="text-blue-600 hover:text-blue-800 underline" target="_blank" rel="noopener noreferrer">{children}</a>,
       }}
@@ -124,6 +140,7 @@ export default function PaperPage() {
     isOpen: false,
     videoId: null
   });
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Fetch images from API
   useEffect(() => {
     const fetchImages = async () => {
@@ -219,26 +236,86 @@ export default function PaperPage() {
       {/* Header */}
       <header className="bg-white sticky top-0 z-50">
         <div className="max-w-full mx-auto px-4">
-          <div className="flex items-center h-16" style={{paddingLeft: '96px'}}>
+          <div className="flex items-center justify-between h-16 lg:pl-32 md:pl-16 pl-4">
             <div className="flex items-center space-x-3">
               <Link href="/" className="flex items-center text-blue-600 hover:text-blue-700">
                 <ArrowLeft className="w-6 h-6" />
               </Link>
-              <h1 className="text-2xl font-bold text-gray-800 lowercase">deeprxiv</h1>
-              <span className="text-lg text-gray-600 font-medium truncate max-w-md">
+              <h1 className="text-2xl font-bold text-gray-900 lowercase">deeprxiv</h1>
+              <span className="text-lg text-gray-800 font-medium truncate max-w-md lg:max-w-2xl">
                 {paperData.title}
               </span>
             </div>
+            <button 
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 text-gray-600 hover:text-gray-900"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
           </div>
         </div>
       </header>
+
+      {/* Mobile Navigation Overlay */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden" onClick={() => setMobileMenuOpen(false)}>
+          <div className="fixed left-0 top-16 bottom-0 w-80 bg-white overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              <nav className="space-y-1">
+                {sectionsData?.map((section) => (
+                  <div key={section.id} className="space-y-1">
+                    <button
+                      onClick={() => {
+                        setActiveContent(section.id);
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`block w-full text-left px-1 py-3 rounded-md transition-colors text-sm font-medium ${
+                        activeContent === section.id
+                          ? 'bg-blue-50 text-blue-700'
+                          : 'text-gray-900 hover:bg-gray-100'
+                      }`}
+                    >
+                      <div className="truncate" title={section.title}>
+                        {section.title}
+                      </div>
+                    </button>
+                    
+                    {section.subsections && section.subsections.length > 0 && (
+                      <div className="ml-8 space-y-1">
+                        {section.subsections.map((subsection) => (
+                          <button
+                            key={subsection.id}
+                            onClick={() => {
+                              setActiveContent(subsection.id);
+                              setMobileMenuOpen(false);
+                            }}
+                            className={`block w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+                              activeContent === subsection.id
+                                ? 'bg-blue-25 text-blue-600'
+                                : 'text-gray-800 hover:bg-gray-50'
+                            }`}
+                          >
+                            <div className="truncate" title={subsection.title}>
+                              {subsection.title}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </nav>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="flex-grow">
         <div className="max-w-full mx-auto px-4">
           <div className="flex min-h-screen">
             {/* Left Sidebar - Navigation */}
-            <aside className="w-72 bg-white flex-shrink-0 fixed left-24 top-16 bottom-0 overflow-y-auto scrollbar-hide">
+            <aside className="w-72 bg-white flex-shrink-0 fixed top-16 bottom-0 overflow-y-auto scrollbar-hide hidden md:block md:left-16 lg:left-32">
               <div className="p-6">
                 <nav className="space-y-1">
               {sectionsData?.map((section) => (
@@ -249,7 +326,7 @@ export default function PaperPage() {
                       className={`block w-full text-left px-1 py-3 rounded-md transition-colors text-sm font-medium ${
                         activeContent === section.id
                           ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-700 hover:bg-gray-100'
+                      : 'text-gray-900 hover:bg-gray-100'
                   }`}
                 >
                       <div className="truncate" title={section.title}>
@@ -267,7 +344,7 @@ export default function PaperPage() {
                             className={`block w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
                               activeContent === subsection.id
                                 ? 'bg-blue-25 text-blue-600'
-                                : 'text-gray-600 hover:bg-gray-50'
+                                : 'text-gray-800 hover:bg-gray-50'
                             }`}
                           >
                             <div className="truncate" title={subsection.title}>
@@ -284,26 +361,148 @@ export default function PaperPage() {
             </aside>
 
             {/* Center Content Area */}
-            <div className="flex-1 bg-white px-6 py-6 overflow-y-auto" style={{marginLeft: '384px', marginRight: '480px'}}>
+            <div className="flex-1 bg-white px-6 py-6 overflow-y-auto main-content">
               {currentContent && (
                 <>
-                  <h3 className="text-2xl font-semibold text-gray-800 mb-6">
+                  <h3 className="text-2xl font-semibold text-gray-900 mb-6">
                     {currentContent.content.title}
                   </h3>
                   
                   {/* Content - Proper Markdown rendering */}
                   <MarkdownContent content={currentContent.content.content} />
+                  
+                  {/* Mobile PDF, Images, and Sources - Only visible on small screens */}
+                  <div className="lg:hidden mt-8 space-y-6">
+                    {/* PDF Section */}
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                        <FileText className="w-4 h-4 mr-2" />
+                        PDF Original
+                      </h4>
+                      {currentContent?.content?.page_number ? (
+                        <div className="space-y-3">
+                          <button
+                            onClick={() => handlePdfPageView(currentContent.content.page_number!)}
+                            className="w-full bg-blue-50 p-3 rounded-lg hover:bg-blue-100 transition-colors text-left"
+                          >
+                            <div className="flex items-center space-x-2">
+                              <FileText className="w-4 h-4 text-blue-600" />
+                              <div>
+                                <p className="text-sm font-medium text-blue-700">
+                                  Page {currentContent.content.page_number}
+                                </p>
+                                <p className="text-xs text-blue-600">
+                                  Click to view full page
+                                </p>
+                              </div>
+                            </div>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-center py-4">
+                          <FileText className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-xs text-gray-500 mb-2">No page reference available</p>
+                          <button
+                            onClick={() => window.open(`https://arxiv.org/pdf/${paperData.arxiv_id}.pdf`, '_blank', 'noopener,noreferrer')}
+                            className="px-3 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
+                          >
+                            View Full PDF
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Images Section */}
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                        <ImageIcon className="w-4 h-4 mr-2" />
+                        Images
+                      </h4>
+                      {imagesLoading ? (
+                        <div className="text-center py-4">
+                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+                          <p className="text-xs text-gray-500 mt-2">Loading images...</p>
+                        </div>
+                      ) : relevantImages.length > 0 ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          {relevantImages.map((image, index) => (
+                            <div
+                              key={image.id || index}
+                              className="aspect-square bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer hover:bg-gray-300 transition-colors overflow-hidden group"
+                              onClick={() => setSelectedImage(image)}
+                            >
+                              <img
+                                src={image.url || `/api/image/${image.id}`}
+                                alt={`Figure ${index + 1}`}
+                                className="max-w-full max-h-full object-contain p-1 group-hover:scale-105 transition-transform"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-4">
+                          <ImageIcon className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-xs text-gray-500">No images for this content</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Sources Section */}
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                        <ExternalLink className="w-4 h-4 mr-2" />
+                        Sources
+                      </h4>
+                      {contentCitations.length > 0 ? (
+                        <div className="space-y-2">
+                          {contentCitations.map((citation, index) => (
+                            <div
+                              key={index}
+                              className="bg-gray-50 p-3 rounded-lg hover:bg-gray-100 transition-colors"
+                            >
+                              <div className="flex items-start space-x-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-gray-900 mb-1">
+                                    Reference {index + 1}
+                                  </p>
+                                  <p className="text-xs text-gray-800 break-words">
+                                    {citation}
+                                  </p>
+                                  <button
+                                    onClick={() => handleCitationClick(citation)}
+                                    className="inline-flex items-center text-xs text-blue-600 hover:text-blue-800 hover:underline mt-2"
+                                  >
+                                    {isYouTubeUrl(citation) ? (
+                                      <Play className="w-3 h-3 mr-1" />
+                                    ) : (
+                                      <ExternalLink className="w-3 h-3 mr-1" />
+                                    )}
+                                    {isYouTubeUrl(citation) ? 'Watch Video' : 'View Source'}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-4">
+                          <ExternalLink className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-xs text-gray-500">No citations for this content</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </>
               )}
             </div>
 
             {/* Right Sidebar - PDF, Images, and Sources */}
-            <aside className="w-96 bg-white flex-shrink-0 fixed right-24 top-16 bottom-0 overflow-y-auto scrollbar-hide">
+            <aside className="w-96 bg-white flex-shrink-0 fixed top-16 bottom-0 overflow-y-auto scrollbar-hide hidden lg:block lg:right-32">
               <div className="p-6 space-y-6">
               
               {/* PDF Section */}
               <div>
-                <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
                   <FileText className="w-4 h-4 mr-2" />
                   PDF Original
                 </h4>
@@ -351,7 +550,7 @@ export default function PaperPage() {
 
               {/* Images Section */}
               <div>
-                <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
                   <ImageIcon className="w-4 h-4 mr-2" />
                   Images
                 </h4>
@@ -391,7 +590,7 @@ export default function PaperPage() {
 
               {/* Sources Section */}
               <div>
-                <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
                   <ExternalLink className="w-4 h-4 mr-2" />
                   Sources
                 </h4>
@@ -404,10 +603,10 @@ export default function PaperPage() {
                       >
                         <div className="flex items-start space-x-2">
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-gray-800 mb-1">
+                            <p className="text-xs font-medium text-gray-900 mb-1">
                               Reference {index + 1}
                             </p>
-                            <p className="text-xs text-gray-600 break-words">
+                            <p className="text-xs text-gray-800 break-words">
                               {citation}
                             </p>
                             <button

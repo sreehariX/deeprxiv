@@ -35,6 +35,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         arxiv_id = sys.argv[1]
     else:
-        arxiv_id = "1706.03762"  # Default paper
+        arxiv_id = "2505.17564"  # Default paper
     
     regenerate_paper_page(arxiv_id) 
