@@ -10,11 +10,12 @@ load_dotenv()
 
 class LLMService:
     def __init__(self):
+        # Initialize Perplexity API only
         self.api_url = "https://api.perplexity.ai/chat/completions"
-        self.api_key = os.getenv("PERPLEXITY_API_KEY")
-        self.model = "sonar"  # Perplexity's default model
+        self.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
+        self.model = "sonar"  # Using Perplexity's powerful model
         
-        if not self.api_key:
+        if not self.perplexity_api_key:
             print("WARNING: PERPLEXITY_API_KEY environment variable not set!")
     
     def _call_perplexity_api(self, prompt, system_prompt="Be precise and concise."):
@@ -23,7 +24,7 @@ class LLMService:
         Returns the response text and citations.
         """
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {self.perplexity_api_key}",
             "Content-Type": "application/json"
         }
         
@@ -66,11 +67,9 @@ class LLMService:
     
     def extract_paper_metadata_flash(self, text_first_pages):
         """
-        Extract basic paper metadata using Perplexity API.
+        Extract basic paper metadata using Perplexity.
         Takes the text from the first few pages of the paper.
         """
-        system_prompt = "Extract metadata from the scientific paper text and provide the result as a valid JSON object."
-        
         prompt = f"""
         Extract the following information from this scientific paper text:
         1. Title
@@ -84,6 +83,8 @@ class LLMService:
         {text_first_pages}
         """
         
+        # Use Perplexity for metadata extraction
+        system_prompt = "Extract metadata from the scientific paper text and provide the result as a valid JSON object."
         print("Sending metadata extraction request to Perplexity API...")
         try:
             result = self._call_perplexity_api(prompt, system_prompt)
@@ -273,12 +274,17 @@ class LLMService:
         Generate a comprehensive educational structure that makes this research accessible and engaging for researchers.
         """
         
+        # Use Perplexity for section generation
         print("Sending section generation request to Perplexity API...")
         try:
             print("Calling Perplexity API for section generation...")
             result = self._call_perplexity_api(prompt, system_prompt)
-            
-            # Process the response to ensure it's valid JSON
+        except Exception as perplexity_error:
+            print(f"Error with Perplexity API: {str(perplexity_error)}")
+            raise perplexity_error
+        
+        # Process the response to ensure it's valid JSON
+        try:
             content = result["content"]
             citations = result["citations"]
             

@@ -11,3 +11,7 @@ numpy
 python-dotenv
 pillow
 pdf2image
+google-genai
+chromadb
+uuid
+PyMuPDF

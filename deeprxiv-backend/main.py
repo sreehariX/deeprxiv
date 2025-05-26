@@ -14,6 +14,10 @@ import sqlalchemy
 from datetime import datetime
 from dotenv import load_dotenv
 import threading
+import chromadb
+from google import genai
+import uuid
+from google.genai.types import EmbedContentConfig
 
 # Load environment variables
 load_dotenv('.env.local')
@@ -42,6 +46,10 @@ app.add_middleware(
 # Initialize services
 pdf_processor = PDFProcessor()
 llm_service = LLMService()
+
+# Initialize Google GenAI client for embeddings only and ChromaDB
+embedding_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+chroma_client = chromadb.PersistentClient(path="deeprxiv_chroma_db")
 
 # Create database tables
 create_tables()
@@ -83,8 +91,178 @@ class PaperStatusResponse(BaseModel):
     processed: bool
     progress: Optional[str] = None
 
+# RAG Chatbot Models
+class QueryRequest(BaseModel):
+    query: str
+    arxiv_id: str
+    top_n: int = 5
+    content_chunks: int = 3  # Number of raw content chunks to return
+    section_chunks: int = 3  # Number of section/subsection chunks to return
+
+class EmbeddingRequest(BaseModel):
+    text: str
+
+class TestPerplexityRequest(BaseModel):
+    prompt: str = "How does RLHF work?"
+
 # Track progress for each paper
 paper_processing_status = {}
+
+def get_embedding(text: str, title="DeepRxiv Paper"):
+    """Generate embeddings using Google's text-embedding-004 model."""
+    response = embedding_client.models.embed_content(
+        model="models/text-embedding-004",
+        contents=text,
+        config=EmbedContentConfig(
+            task_type="RETRIEVAL_DOCUMENT",
+            output_dimensionality=768,
+            title=title,
+        ),
+    )
+    return response.embeddings[0].values
+
+def split_content_by_tokens(content, max_tokens=2000, chars_per_token=4):
+    """Fast and reliable content chunking by character count."""
+    # Normalize newlines to spaces and remove multiple spaces
+    normalized_content = content.replace('\n', ' ').replace('\r', ' ')
+    normalized_content = ' '.join(normalized_content.split())
+    
+    max_chars = max_tokens * chars_per_token
+    
+    # Quick return if content fits in one chunk
+    if len(normalized_content) <= max_chars:
+        return [normalized_content]
+    
+    chunks = []
+    start = 0
+    
+    while start < len(normalized_content):
+        # Determine end position of this chunk
+        end = min(start + max_chars, len(normalized_content))
+        
+        # If we're not at the end of the content, find last space
+        if end < len(normalized_content):
+            # Look for the last space within the chunk
+            last_space = normalized_content.rfind(' ', start, end)
+            
+            if last_space != -1:  # If we found a space
+                end = last_space  # Cut at the space
+            # If no space found (very rare for large chunks), we'd cut at max_chars
+        
+        # Add the chunk and move to next position
+        chunks.append(normalized_content[start:end])
+        start = end + 1  # Skip the space
+    
+    return chunks
+
+def index_paper_content(arxiv_id: str, content: str, sections: List[dict] = None):
+    """Index paper content and sections in ChromaDB."""
+    try:
+        collection = chroma_client.get_or_create_collection(
+            name=f"paper_{arxiv_id}",
+            metadata={"hnsw:space": "cosine"}
+        )
+        
+        documents = []
+        embeddings = []
+        metadatas = []
+        ids_list = []
+        
+        # Index main content chunks with better page estimation
+        content_chunks = split_content_by_tokens(content)
+        chars_per_page = len(content) / max(20, 1)  # Estimate chars per page, assume at least 20 pages
+        
+        for i, chunk in enumerate(content_chunks):
+            try:
+                embedding = get_embedding(chunk, title=f"Paper {arxiv_id}")
+                documents.append(chunk)
+                embeddings.append(embedding)
+                
+                # Estimate page number based on character position
+                chunk_start_pos = sum(len(content_chunks[j]) for j in range(i))
+                estimated_page = max(1, int(chunk_start_pos / chars_per_page) + 1)
+                
+                metadatas.append({
+                    'type': 'content',
+                    'chunk_index': str(i),
+                    'total_chunks': str(len(content_chunks)),
+                    'estimated_page': str(estimated_page),
+                    'chunk_start_pos': str(chunk_start_pos),
+                    'arxiv_id': arxiv_id
+                })
+                ids_list.append(str(uuid.uuid4()))
+                print(f"Indexed content chunk {i+1}/{len(content_chunks)} for paper {arxiv_id} (est. page {estimated_page})")
+            except Exception as e:
+                print(f"Error indexing content chunk {i+1}: {str(e)}")
+        
+        # Index sections if available
+        if sections:
+            for section in sections:
+                try:
+                    section_content = section.get('content', '')
+                    if section_content:
+                        section_chunks = split_content_by_tokens(section_content)
+                        for i, chunk in enumerate(section_chunks):
+                            try:
+                                embedding = get_embedding(chunk, title=f"Paper {arxiv_id} - {section.get('title', 'Section')}")
+                                documents.append(chunk)
+                                embeddings.append(embedding)
+                                metadatas.append({
+                                    'type': 'section',
+                                    'section_id': section.get('id', ''),
+                                    'section_title': section.get('title', ''),
+                                    'chunk_index': str(i),
+                                    'total_chunks': str(len(section_chunks)),
+                                    'page_number': str(section.get('page_number', '')),
+                                    'arxiv_id': arxiv_id
+                                })
+                                ids_list.append(str(uuid.uuid4()))
+                                print(f"Indexed section '{section.get('title', 'Unknown')}' chunk {i+1}/{len(section_chunks)}")
+                            except Exception as e:
+                                print(f"Error indexing section chunk: {str(e)}")
+                        
+                        # Index subsections
+                        for subsection in section.get('subsections', []):
+                            subsection_content = subsection.get('content', '')
+                            if subsection_content:
+                                subsection_chunks = split_content_by_tokens(subsection_content)
+                                for i, chunk in enumerate(subsection_chunks):
+                                    try:
+                                        embedding = get_embedding(chunk, title=f"Paper {arxiv_id} - {subsection.get('title', 'Subsection')}")
+                                        documents.append(chunk)
+                                        embeddings.append(embedding)
+                                        metadatas.append({
+                                            'type': 'subsection',
+                                            'section_id': section.get('id', ''),
+                                            'section_title': section.get('title', ''),
+                                            'subsection_id': subsection.get('id', ''),
+                                            'subsection_title': subsection.get('title', ''),
+                                            'chunk_index': str(i),
+                                            'total_chunks': str(len(subsection_chunks)),
+                                            'page_number': str(subsection.get('page_number', '')),
+                                            'arxiv_id': arxiv_id
+                                        })
+                                        ids_list.append(str(uuid.uuid4()))
+                                        print(f"Indexed subsection '{subsection.get('title', 'Unknown')}' chunk {i+1}/{len(subsection_chunks)}")
+                                    except Exception as e:
+                                        print(f"Error indexing subsection chunk: {str(e)}")
+                except Exception as e:
+                    print(f"Error processing section: {str(e)}")
+        
+        # Upsert all documents to ChromaDB
+        if documents:
+            collection.upsert(
+                ids=ids_list,
+                documents=documents,
+                embeddings=embeddings,
+                metadatas=metadatas
+            )
+            print(f"Successfully indexed {len(documents)} chunks for paper {arxiv_id}")
+        
+    except Exception as e:
+        print(f"Error indexing paper {arxiv_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 @app.get("/")
 def read_root():
@@ -437,6 +615,29 @@ def process_paper(arxiv_id: str, db: Session = None):
         db.commit()
         db.refresh(paper)
         print(f"Paper {arxiv_id} successfully processed and saved to database")
+        
+        # Index paper content for RAG chatbot
+        paper_processing_status[arxiv_id] = "Indexing content for search"
+        print(f"Status: {paper_processing_status[arxiv_id]}")
+        
+        try:
+            # Parse sections data for indexing
+            sections_for_indexing = None
+            if paper.sections_data:
+                sections_data = json.loads(paper.sections_data)
+                if isinstance(sections_data, dict):
+                    sections_for_indexing = sections_data.get("sections", [])
+                elif isinstance(sections_data, list):
+                    sections_for_indexing = sections_data
+            
+            # Index the paper content and sections
+            index_paper_content(arxiv_id, paper.extracted_text, sections_for_indexing)
+            print(f"Successfully indexed paper {arxiv_id} for RAG chatbot")
+        except Exception as indexing_error:
+            print(f"Error indexing paper {arxiv_id}: {str(indexing_error)}")
+            import traceback
+            traceback.print_exc()
+            # Don't fail the entire process if indexing fails
         
         # Verify data was saved
         db.refresh(paper)
@@ -1440,6 +1641,17 @@ async def get_image(image_id: str, db: Session = Depends(get_db)):
     
     raise HTTPException(status_code=404, detail="Image not found")
 
+@app.get("/api/highlighted-image/{highlight_id}")
+async def get_highlighted_image(highlight_id: str):
+    """Serve a highlighted page image by ID."""
+    # Look for the highlighted image in the PDF processor's temp directory
+    highlight_path = os.path.join(pdf_processor.temp_dir, f"highlight_{highlight_id}.png")
+    
+    if os.path.exists(highlight_path):
+        return FileResponse(highlight_path, media_type="image/png")
+    
+    raise HTTPException(status_code=404, detail="Highlighted image not found")
+
 @app.get("/api")
 def health_check():
     """Health check endpoint for the frontend to verify backend is running."""
@@ -1464,6 +1676,263 @@ async def get_paper_status(arxiv_id: str, db: Session = Depends(get_db)):
         processed=paper.processed,
         progress=progress
     )
+
+# RAG Chatbot Endpoints
+
+@app.post("/api/query")
+async def query_paper(request: QueryRequest):
+    """Query a specific paper's content using RAG with separate content and section results."""
+    try:
+        arxiv_id = request.arxiv_id
+        query = request.query
+        content_chunks = request.content_chunks
+        section_chunks = request.section_chunks
+        
+        # Get query embedding
+        query_embedding = get_embedding(query, title=f"Query for paper {arxiv_id}")
+        
+        # Get the paper's collection
+        try:
+            collection = chroma_client.get_collection(name=f"paper_{arxiv_id}")
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"Paper {arxiv_id} not found in vector database. Please ensure the paper has been processed and indexed.")
+        
+        # Query the collection with increased results to separate content types
+        total_results = max(content_chunks + section_chunks * 2, 20)  # Get more results to filter
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=total_results,
+            include=['documents', 'metadatas', 'distances']
+        )
+        
+        # Separate results by content type
+        content_results = []
+        section_results = []
+        
+        if results['documents'] and results['documents'][0]:
+            for i in range(len(results['documents'][0])):
+                result = {
+                    'document': results['documents'][0][i],
+                    'metadata': results['metadatas'][0][i],
+                    'similarity_score': 1 - results['distances'][0][i]
+                }
+                
+                content_type = result['metadata'].get('type', 'content')
+                if content_type == 'content':
+                    content_results.append(result)
+                elif content_type in ['section', 'subsection']:
+                    section_results.append(result)
+        
+        # Limit results to requested amounts
+        content_results = content_results[:content_chunks]
+        section_results = section_results[:section_chunks]
+        
+        # Combine for overall results (maintaining separation info)
+        all_results = content_results + section_results
+        
+        if not all_results:
+            return {
+                "query": query,
+                "arxiv_id": arxiv_id,
+                "answer": "No relevant content found for your query.",
+                "content_results": [],
+                "section_results": [],
+                "sources": [],
+                "highlighted_pages": []
+            }
+        
+        # Format context for LLM with clear separation
+        context_content = ""
+        sources = []
+        highlighted_pages = []
+        
+        # Add content chunks first
+        if content_results:
+            context_content += "\n=== RAW EXTRACTED TEXT ===\n"
+            for idx, result in enumerate(content_results):
+                metadata = result['metadata']
+                chunk_index = int(metadata.get('chunk_index', idx))
+                source_info = f"Raw Content Chunk {chunk_index + 1}"
+                
+                context_content += f"\n[C{idx + 1}] {source_info}:\n{result['document']}\n"
+                sources.append({
+                    'index': f"C{idx + 1}",
+                    'type': 'content',
+                    'title': f'Raw Content Chunk {chunk_index + 1}',
+                    'chunk_index': chunk_index,
+                    'similarity_score': result['similarity_score'],
+                    'text': result['document']
+                })
+                
+                # Prepare for page highlighting - we'll generate highlighted pages for content chunks
+                highlighted_pages.append({
+                    'type': 'content',
+                    'chunk_index': chunk_index,
+                    'text': result['document'],
+                    'similarity_score': result['similarity_score']
+                })
+        
+        # Add section chunks
+        if section_results:
+            context_content += "\n=== STRUCTURED SECTIONS ===\n"
+            for idx, result in enumerate(section_results):
+                metadata = result['metadata']
+                content_type = metadata.get('type', 'section')
+                
+                if content_type == 'section':
+                    source_info = f"Section: {metadata.get('section_title', 'Unknown')}"
+                    if metadata.get('page_number'):
+                        source_info += f" (Page {metadata.get('page_number')})"
+                elif content_type == 'subsection':
+                    source_info = f"Subsection: {metadata.get('subsection_title', 'Unknown')} (under {metadata.get('section_title', 'Unknown')})"
+                    if metadata.get('page_number'):
+                        source_info += f" (Page {metadata.get('page_number')})"
+                
+                context_content += f"\n[S{idx + 1}] {source_info}:\n{result['document']}\n"
+                sources.append({
+                    'index': f"S{idx + 1}",
+                    'type': content_type,
+                    'title': metadata.get('section_title') or metadata.get('subsection_title', 'Section'),
+                    'page_number': metadata.get('page_number'),
+                    'similarity_score': result['similarity_score']
+                })
+        
+        # Generate answer using Perplexity
+        answer_prompt = f"""You are a helpful research assistant. Answer the user's question about this academic paper based on the provided context.
+
+User Question: {query}
+
+Context from Paper {arxiv_id}:
+{context_content}
+
+Instructions:
+1. Answer the question directly and accurately based on the provided context
+2. Use specific information from both raw content (C1, C2, etc.) and structured sections (S1, S2, etc.)
+3. Include relevant citations using [C1], [S2], etc. format referring to the numbered sources
+4. When referencing raw content, explain that it comes from the original extracted text
+5. When referencing sections, mention they are from the structured analysis
+6. If the context doesn't contain enough information to answer the question, say so clearly
+7. Keep your answer focused and concise while being informative
+8. Use technical language appropriate for the academic content
+
+Answer:"""
+
+        # Generate highlighted page images if we have content results
+        highlighted_images = []
+        if highlighted_pages:
+            try:
+                # Get the paper's PDF data
+                from database import SessionLocal
+                db = SessionLocal()
+                paper = db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
+                if paper and paper.pdf_data:
+                    highlighted_images = pdf_processor.generate_page_highlights_for_query(
+                        paper.pdf_data, 
+                        highlighted_pages
+                    )
+                    # Add URLs for serving the highlighted images
+                    for img in highlighted_images:
+                        img['url'] = f"/api/highlighted-image/{img['id']}"
+                db.close()
+            except Exception as highlight_error:
+                print(f"Error generating highlighted images: {str(highlight_error)}")
+        
+        try:
+            # Use Perplexity via the LLM service
+            system_prompt = "You are a helpful research assistant specializing in academic paper analysis. Provide accurate, well-sourced answers that distinguish between raw extracted text and structured sections."
+            perplexity_result = llm_service._call_perplexity_api(answer_prompt, system_prompt)
+            answer = perplexity_result["content"]
+            
+        except Exception as llm_error:
+            print(f"Error generating LLM answer: {str(llm_error)}")
+            answer = f"I found relevant content in the paper, but encountered an error generating a detailed answer. Here are the key relevant excerpts: {all_results[0]['document'][:500]}..."
+        
+        return {
+            "query": query,
+            "arxiv_id": arxiv_id,
+            "answer": answer,
+            "content_results": content_results,
+            "section_results": section_results,
+            "sources": sources,
+            "highlighted_pages": highlighted_pages,
+            "highlighted_images": highlighted_images
+        }
+    
+    except Exception as e:
+        print(f"Error in query endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/test-embedding")
+async def test_embedding(request: EmbeddingRequest):
+    """Test the embedding functionality."""
+    try:
+        embedding = get_embedding(request.text)
+        return {
+            "text": request.text,
+            "embedding_length": len(embedding),
+            "embedding_sample": embedding[:10]  # First 10 dimensions
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/test-perplexity")
+async def test_perplexity_model(request: TestPerplexityRequest):
+    """Test the Perplexity model."""
+    try:
+        # Use Perplexity via the LLM service
+        system_prompt = "Be helpful and provide accurate, well-researched answers."
+        result = llm_service._call_perplexity_api(request.prompt, system_prompt)
+        
+        return {"response": result["content"], "citations": result.get("citations", [])}
+    
+    except Exception as e:
+        print(f"Error in test perplexity: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/papers/{arxiv_id}/collection-stats")
+async def get_collection_stats(arxiv_id: str):
+    """Get statistics about a paper's vector collection."""
+    try:
+        collection = chroma_client.get_collection(name=f"paper_{arxiv_id}")
+        
+        count = collection.count()
+        
+        # Get sample documents to understand the structure
+        if count > 0:
+            results = collection.get(limit=min(10, count), include=['metadatas'])
+            
+            # Analyze the metadata
+            content_types = {}
+            sections = set()
+            pages = set()
+            
+            for metadata in results['metadatas']:
+                content_type = metadata.get('type', 'unknown')
+                content_types[content_type] = content_types.get(content_type, 0) + 1
+                
+                if metadata.get('section_title'):
+                    sections.add(metadata.get('section_title'))
+                
+                if metadata.get('page_number'):
+                    pages.add(metadata.get('page_number'))
+            
+            return {
+                "arxiv_id": arxiv_id,
+                "total_chunks": count,
+                "content_types": content_types,
+                "unique_sections": len(sections),
+                "sections": sorted(list(sections)),
+                "pages_covered": sorted(list(pages))
+            }
+        else:
+            return {
+                "arxiv_id": arxiv_id,
+                "total_chunks": 0,
+                "message": "Collection is empty"
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Collection for paper {arxiv_id} not found")
 
 if __name__ == "__main__":
     import uvicorn
