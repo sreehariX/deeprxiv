@@ -25,6 +25,7 @@ load_dotenv('.env.local')
 from database import get_db, Paper, User, ChatSession, ChatMessage, create_tables
 from pdf_processor import PDFProcessor
 from llm_service import LLMService
+from admin_routes import router as admin_router
 
 # Register SQLite JSON adapter for better JSON handling
 sqlite3.register_adapter(dict, json.dumps)
@@ -53,6 +54,9 @@ chroma_client = chromadb.PersistentClient(path="deeprxiv_chroma_db")
 
 # Create database tables
 create_tables()
+
+# Include admin routes
+app.include_router(admin_router)
 
 # Path to frontend directory - use absolute path (replace with actual path)
 # Get current directory and navigate to frontend

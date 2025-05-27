@@ -15,3 +15,20 @@ google-genai
 chromadb
 uuid
 PyMuPDF
+# Authentication & Security
+passlib[bcrypt]
+python-jose[cryptography]
+authlib
+httpx
+# Analytics
+posthog
+# Email
+email-validator
+# CORS
+fastapi-cors
+# Rate limiting
+slowapi
+# Caching
+redis
+# Session management
+fastapi-sessions
