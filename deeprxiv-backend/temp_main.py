@@ -18,7 +18,6 @@ import chromadb
 from google import genai
 import uuid
 from google.genai.types import EmbedContentConfig
-
 # Load environment variables
 load_dotenv('.env.local')
 
@@ -1051,7 +1050,6 @@ export default function PaperPage() {
     videoId: null
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  
   // Fetch images from API
   useEffect(() => {
     const fetchImages = async () => {
@@ -1139,10 +1137,7 @@ export default function PaperPage() {
     window.open(pdfUrl, '_blank', 'noopener,noreferrer');
   };
 
-  // Handle chat redirect
-  const handleChatRedirect = () => {
-    window.location.href = `/chat?arxiv_id=${paperData.arxiv_id}`;
-  };
+
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
@@ -1553,18 +1548,6 @@ export default function PaperPage() {
         </div>
       </main>
 
-      {/* Floating Chat Button */}
-      <button
-        onClick={handleChatRedirect}
-        className="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 z-50 flex items-center gap-2"
-        title="Chat with this paper"
-      >
-        <MessageCircle className="w-5 h-5" />
-        <span className="text-sm font-medium">
-          Chat with this paper {paperData.arxiv_id}
-        </span>
-      </button>
-
       {/* Image Modal with Close Button */}
       {selectedImage && (
         <div 
@@ -1612,6 +1595,15 @@ export default function PaperPage() {
           </div>
         </div>
       )}
+
+      {/* Chat with Paper Button - Fixed Overlay */}
+      <Link 
+        href={`/chat?paper_id=${paperData.id}&arxiv_id=${paperData.arxiv_id}`}
+        className="fixed bottom-6 right-6 z-40 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-full shadow-lg transition-all duration-200 flex items-center gap-2 hover:scale-105"
+      >
+        <MessageCircle className="w-5 h-5" />
+        <span className="font-medium">Chat with this paper</span>
+      </Link>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import os
 import json
 import requests
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks, Header
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -102,7 +102,6 @@ class QueryRequest(BaseModel):
     top_n: int = 5
     content_chunks: int = 3  # Number of raw content chunks to return
     section_chunks: int = 3  # Number of section/subsection chunks to return
-    query_mode: str = "enhanced"  # "enhanced" or "raw"
 
 class EmbeddingRequest(BaseModel):
     text: str
@@ -123,20 +122,13 @@ class ChatMessageRequest(BaseModel):
     message: str
     content_chunks: int = 3
     section_chunks: int = 3
-    model: str = "sonar"  # Default model
-    stream: bool = True  # Default to streaming
-    query_mode: str = "enhanced"  # "enhanced" or "raw"
 
 class ChatMessageResponse(BaseModel):
     id: int
     role: str
     content: str
-    chain_of_thought: Optional[str] = None  # For reasoning models
     sources: Optional[List[dict]] = None
-    citations: Optional[List[str]] = None
-    images: Optional[List[dict]] = None
     highlighted_images: Optional[List[dict]] = None
-    model_used: Optional[str] = None
     thumbs_up: Optional[bool] = None
     thumbs_down: Optional[bool] = None
     created_at: datetime
@@ -160,6 +152,15 @@ class ChatFeedbackRequest(BaseModel):
     thumbs_down: Optional[bool] = None
     suggested_answer: Optional[str] = None
 
+# Enhanced Chat Models for Perplexity Integration
+class EnhancedChatMessageRequest(BaseModel):
+    session_id: str
+    message: str
+    content_chunks: int = 3
+    section_chunks: int = 3
+    model: str = "sonar"  # Default model
+    stream: bool = False
+
 class ModelInfo(BaseModel):
     name: str
     description: str
@@ -169,6 +170,25 @@ class ModelInfo(BaseModel):
 
 class AvailableModelsResponse(BaseModel):
     models: Dict[str, ModelInfo]
+
+class ChatImageResponse(BaseModel):
+    url: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+class EnhancedChatMessageResponse(BaseModel):
+    id: int
+    role: str
+    content: str
+    chain_of_thought: Optional[str] = None  # For reasoning models
+    sources: Optional[List[dict]] = None
+    citations: Optional[List[str]] = None
+    images: Optional[List[ChatImageResponse]] = None
+    highlighted_images: Optional[List[dict]] = None
+    model_used: Optional[str] = None
+    thumbs_up: Optional[bool] = None
+    thumbs_down: Optional[bool] = None
+    created_at: datetime
 
 # Track progress for each paper
 paper_processing_status = {}
@@ -858,7 +878,7 @@ def create_nextjs_folder_structure(paper):
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Image as ImageIcon, ExternalLink, X, Play, FileText, BookOpen, Menu, MessageCircle } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, ExternalLink, X, Play, FileText, BookOpen, Menu } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -1051,7 +1071,6 @@ export default function PaperPage() {
     videoId: null
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  
   // Fetch images from API
   useEffect(() => {
     const fetchImages = async () => {
@@ -1139,10 +1158,7 @@ export default function PaperPage() {
     window.open(pdfUrl, '_blank', 'noopener,noreferrer');
   };
 
-  // Handle chat redirect
-  const handleChatRedirect = () => {
-    window.location.href = `/chat?arxiv_id=${paperData.arxiv_id}`;
-  };
+
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
@@ -1553,18 +1569,6 @@ export default function PaperPage() {
         </div>
       </main>
 
-      {/* Floating Chat Button */}
-      <button
-        onClick={handleChatRedirect}
-        className="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg shadow-lg transition-all duration-200 hover:scale-105 z-50 flex items-center gap-2"
-        title="Chat with this paper"
-      >
-        <MessageCircle className="w-5 h-5" />
-        <span className="text-sm font-medium">
-          Chat with this paper {paperData.arxiv_id}
-        </span>
-      </button>
-
       {/* Image Modal with Close Button */}
       {selectedImage && (
         <div 
@@ -1706,15 +1710,11 @@ async def get_paper_images(arxiv_id: str, db: Session = Depends(get_db)):
 @app.get("/api/image/{image_id}")
 async def get_image(image_id: str, db: Session = Depends(get_db)):
     """Serve an extracted image by ID."""
-    print(f"📷 Serving image request for ID: {image_id}")
-    
     # Find the paper containing this image
     papers = db.query(Paper).filter(Paper.extracted_images.like(f"%{image_id}%")).all()
-    print(f"Found {len(papers)} papers that might contain this image")
     
     for paper in papers:
         if not paper.extracted_images:
-            print(f"Paper {paper.arxiv_id} has no extracted_images data")
             continue
         
         try:
@@ -1724,87 +1724,15 @@ async def get_image(image_id: str, db: Session = Depends(get_db)):
             else:
                 images = paper.extracted_images
                 
-            print(f"Paper {paper.arxiv_id} has {len(images) if images else 0} images")
-                
             for image in images:
                 if image.get("id") == image_id:
                     image_path = image.get("path")
-                    print(f"Found matching image: {image_id}")
-                    print(f"Original path: {image_path}")
-                    
-                    # Try multiple path resolution strategies
-                    paths_to_try = []
-                    
-                    if image_path:
-                        # 1. Try original path first
-                        paths_to_try.append(image_path)
-                        
-                        # 2. Try basename in current PDFProcessor temp directory
-                        filename = os.path.basename(image_path)
-                        paths_to_try.append(os.path.join(pdf_processor.temp_dir, filename))
-                        
-                        # 3. Try in common temp directories
-                        temp_dirs = [
-                            'temp',
-                            'pdf_processor_temp',
-                            '/tmp',
-                            os.path.join(os.getcwd(), 'temp'),
-                            os.path.join(os.getcwd(), 'pdf_processor_temp')
-                        ]
-                        
-                        for temp_dir in temp_dirs:
-                            if os.path.exists(temp_dir):
-                                paths_to_try.append(os.path.join(temp_dir, filename))
-                        
-                        # 4. Try regenerating the image from PDF if we have it
-                        if paper.pdf_data:
-                            try:
-                                print(f"Attempting to regenerate image from PDF...")
-                                # Extract the page number from the image data
-                                page_num = image.get('page', 0)
-                                
-                                # Use pdf_processor to extract this specific image
-                                extracted_images = pdf_processor.extract_images_from_pdf(paper.pdf_data)
-                                
-                                # Find the matching image by page and approximate position
-                                for extracted_img in extracted_images:
-                                    if (extracted_img.get('page') == page_num and 
-                                        extracted_img.get('id') == image_id):
-                                        regenerated_path = extracted_img.get('path')
-                                        if regenerated_path and os.path.exists(regenerated_path):
-                                            print(f"✅ Regenerated image at: {regenerated_path}")
-                                            return FileResponse(regenerated_path)
-                            except Exception as regen_error:
-                                print(f"❌ Failed to regenerate image: {regen_error}")
-                    
-                    # Try each path until we find one that exists
-                    for path_to_try in paths_to_try:
-                        print(f"Trying path: {path_to_try}")
-                        if path_to_try and os.path.exists(path_to_try):
-                            print(f"✅ Serving image from: {path_to_try}")
-                            return FileResponse(path_to_try)
-                    
-                    print(f"❌ Image file not found at any of {len(paths_to_try)} attempted paths")
-                    
-                    # Last resort: try to find any file with the image_id in the name
-                    for temp_dir in [pdf_processor.temp_dir, 'temp', '/tmp']:
-                        if os.path.exists(temp_dir):
-                            for file in os.listdir(temp_dir):
-                                if image_id in file and file.endswith(('.png', '.jpg', '.jpeg')):
-                                    fallback_path = os.path.join(temp_dir, file)
-                                    print(f"✅ Found fallback image: {fallback_path}")
-                                    return FileResponse(fallback_path)
-                        
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON decode error for paper {paper.arxiv_id}: {str(e)}")
-        except Exception as e:
-            print(f"❌ Error processing paper {paper.arxiv_id}: {str(e)}")
+                    if image_path and os.path.exists(image_path):
+                        return FileResponse(image_path)
+        except json.JSONDecodeError:
+            pass
     
-    print(f"❌ Image {image_id} not found in any paper or file system")
-    
-    # Return a placeholder image or 404
-    placeholder_response = HTTPException(status_code=404, detail=f"Image {image_id} not found")
-    raise placeholder_response
+    raise HTTPException(status_code=404, detail="Image not found")
 
 @app.get("/api/highlighted-image/{highlight_id}")
 async def get_highlighted_image(highlight_id: str):
@@ -1816,56 +1744,6 @@ async def get_highlighted_image(highlight_id: str):
         return FileResponse(highlight_path, media_type="image/png")
     
     raise HTTPException(status_code=404, detail="Highlighted image not found")
-
-@app.post("/api/generate-highlight/{arxiv_id}")
-async def generate_chunk_highlight(
-    arxiv_id: str, 
-    chunk_text: str = None,
-    estimated_page: int = None,
-    chunk_index: int = None,
-    db: Session = Depends(get_db)
-):
-    """Generate a highlighted PDF page for a specific content chunk."""
-    print(f"🖍️ Generating highlight for {arxiv_id}, page {estimated_page}, chunk {chunk_index}")
-    
-    # Get paper from database
-    paper = db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
-    if not paper or not paper.pdf_data:
-        raise HTTPException(status_code=404, detail="Paper not found or no PDF data available")
-    
-    try:
-        # Generate unique highlight ID
-        highlight_id = str(uuid.uuid4())
-        highlight_path = os.path.join(pdf_processor.temp_dir, f"highlight_{highlight_id}.png")
-        
-        # Use estimated_page (1-indexed from frontend) converted to 0-indexed for processing
-        page_to_highlight = max(0, (estimated_page or 1) - 1)
-        
-        print(f"Highlighting page {page_to_highlight} (0-indexed) with text: '{chunk_text[:100]}...'")
-        
-        # Create highlighted page image
-        result = pdf_processor.create_highlighted_page_image(
-            paper.pdf_data,
-            page_to_highlight,
-            chunk_text or "",
-            highlight_path
-        )
-        
-        if result:
-            print(f"✅ Generated highlight image: {highlight_id}")
-            return {
-                "highlight_id": highlight_id,
-                "highlight_url": f"/api/highlighted-image/{highlight_id}",
-                "page": estimated_page or page_to_highlight + 1,
-                "chunk_index": chunk_index
-            }
-        else:
-            print(f"❌ Failed to generate highlight image")
-            raise HTTPException(status_code=500, detail="Failed to generate highlighted image")
-            
-    except Exception as e:
-        print(f"❌ Error generating highlight: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error generating highlight: {str(e)}")
 
 @app.get("/api")
 def health_check():
@@ -2152,7 +2030,7 @@ async def get_collection_stats(arxiv_id: str):
 # Chat Endpoints
 
 @app.post("/api/chat/create", response_model=ChatSessionResponse)
-async def create_chat_session(request: ChatCreateRequest, client_ip: str = Header(None), db: Session = Depends(get_db)):
+async def create_chat_session(request: ChatCreateRequest, db: Session = Depends(get_db)):
     """Create a new chat session."""
     try:
         # Find or create paper if arxiv_id is provided
@@ -2168,34 +2046,10 @@ async def create_chat_session(request: ChatCreateRequest, client_ip: str = Heade
 
         # Create or get user
         user = None
-        user_id = request.user_id
-        
-        # If no user_id is provided, create an anonymous session with client IP
-        if not user_id:
-            # Check if we have an anonymous user with this IP
-            anon_user = db.query(User).filter(
-                User.is_anonymous == True,
-                User.username == f"anon_{client_ip}"
-            ).first()
-            
-            if anon_user:
-                user = anon_user
-                user_id = anon_user.id
-            else:
-                # Create a new anonymous user with IP as username
-                anon_user = User(
-                    username=f"anon_{client_ip}",
-                    is_anonymous=True,
-                    created_at=datetime.utcnow()
-                )
-                db.add(anon_user)
-                db.flush()  # Get the ID without committing yet
-                user = anon_user
-                user_id = anon_user.id
-        else:
-            user = db.query(User).filter(User.id == user_id).first()
+        if request.user_id:
+            user = db.query(User).filter(User.id == request.user_id).first()
             if not user:
-                raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found")
+                raise HTTPException(status_code=404, detail=f"User with ID {request.user_id} not found")
 
         # Generate share URL if public
         share_url = None
@@ -2206,7 +2060,7 @@ async def create_chat_session(request: ChatCreateRequest, client_ip: str = Heade
         session = ChatSession(
             title=request.title or (f"Chat about {paper.title}" if paper else "New Chat"),
             paper_id=paper.id if paper else None,
-            user_id=user_id,
+            user_id=user.id if user else None,
             is_public=request.is_public,
             share_url=share_url
         )
@@ -2236,32 +2090,17 @@ async def create_chat_session(request: ChatCreateRequest, client_ip: str = Heade
 @app.get("/api/chat/sessions")
 async def get_user_chat_sessions(user_id: Optional[int] = None, include_public: bool = True, db: Session = Depends(get_db)):
     """Get chat sessions for a user or public sessions."""
-    print(f"📋 Loading sessions: user_id={user_id}, include_public={include_public}")
-
-    query = None
+    query = db.query(ChatSession)
+    
     if user_id:
-        # Load user's sessions
-        query = db.query(ChatSession).filter(ChatSession.user_id == user_id)
-        print(f"👤 Loading sessions for user {user_id}")
-        
         if include_public:
-            # Include public sessions along with user's sessions
-            query = query.union(
-                db.query(ChatSession).filter(ChatSession.is_public == True)
-            )
-            print(f"🔓 Including public sessions")
-    else:
-        if include_public:
-            # Load only public sessions
-            query = db.query(ChatSession).filter(ChatSession.is_public == True)
-            print(f"🔓 Loading public sessions only")
+            query = query.filter((ChatSession.user_id == user_id) | (ChatSession.is_public == True))
         else:
-            # Return empty when no user and not including public
-            print(f"🚫 No user specified and not including public sessions - returning empty list")
-            return []
-
+            query = query.filter(ChatSession.user_id == user_id)
+    else:
+        query = query.filter(ChatSession.is_public == True)
+    
     sessions = query.order_by(ChatSession.updated_at.desc()).limit(50).all()
-    print(f"✅ Found {len(sessions)} sessions")
     
     # Convert to response format
     session_responses = []
@@ -2281,29 +2120,10 @@ async def get_user_chat_sessions(user_id: Optional[int] = None, include_public: 
             "share_url": session.share_url,
             "created_at": session.created_at,
             "updated_at": session.updated_at,
-            "message_count": len(session.messages),
-            "user_id": session.user_id
+            "message_count": len(session.messages)
         })
     
     return session_responses
-
-# CRITICAL: Models endpoint MUST come before {session_id} route to avoid routing conflicts
-@app.get("/api/chat/models", response_model=AvailableModelsResponse)
-async def get_available_models_fixed():
-    """Get list of available Perplexity models with descriptions."""
-    models_info = llm_service.get_available_models()
-    formatted_models = {}
-    
-    for model_key, model_data in models_info.items():
-        formatted_models[model_key] = ModelInfo(
-            name=model_data["name"],
-            description=model_data["description"],
-            type=model_data["type"],
-            context_length=model_data["context_length"],
-            features=model_data["features"]
-        )
-    
-    return AvailableModelsResponse(models=formatted_models)
 
 @app.get("/api/chat/{session_id}", response_model=ChatSessionResponse)
 async def get_chat_session(session_id: str, db: Session = Depends(get_db)):
@@ -2318,22 +2138,15 @@ async def get_chat_session(session_id: str, db: Session = Depends(get_db)):
     # Convert messages to response format
     message_responses = []
     for msg in messages:
-        # Parse JSON fields properly
         sources = json.loads(msg.sources) if msg.sources else None
-        citations = json.loads(msg.citations) if msg.citations else None
-        images = json.loads(msg.images) if msg.images else None
         highlighted_images = json.loads(msg.highlighted_images) if msg.highlighted_images else None
         
         message_responses.append(ChatMessageResponse(
             id=msg.id,
             role=msg.role,
             content=msg.content,
-            chain_of_thought=msg.chain_of_thought,
             sources=sources,
-            citations=citations,
-            images=images,
             highlighted_images=highlighted_images,
-            model_used=msg.model_used,
             thumbs_up=msg.thumbs_up,
             thumbs_down=msg.thumbs_down,
             created_at=msg.created_at
@@ -2360,13 +2173,11 @@ async def get_chat_session(session_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/chat/message")
 async def send_chat_message(request: ChatMessageRequest, db: Session = Depends(get_db)):
-    """Send a message in a chat session with model selection and streaming support."""
+    """Send a message in a chat session."""
     try:
         print(f"\n=== CHAT MESSAGE REQUEST ===")
         print(f"Session ID: {request.session_id}")
         print(f"Message: {request.message}")
-        print(f"Model: {request.model}")
-        print(f"Stream: {request.stream}")
         print(f"Content chunks: {request.content_chunks}")
         print(f"Section chunks: {request.section_chunks}")
         
@@ -2398,18 +2209,252 @@ async def send_chat_message(request: ChatMessageRequest, db: Session = Depends(g
         db.refresh(user_message)
         print(f"✅ Saved user message with ID: {user_message.id}")
 
-        # Set the model for the LLM service
-        llm_service.set_model(request.model)
+        # Generate response using RAG if paper is available
+        if session.paper_id:
+            print(f"\n🔍 USING RAG MODE - Paper ID: {session.paper_id}")
+            paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
+            if paper and paper.processed:
+                print(f"✅ Found processed paper: {paper.arxiv_id} - {paper.title}")
+                print(f"Paper processed status: {paper.processed}")
+                
+                # Use existing query logic
+                query_request = QueryRequest(
+                    query=request.message,
+                    arxiv_id=paper.arxiv_id,
+                    content_chunks=request.content_chunks,
+                    section_chunks=request.section_chunks
+                )
+                
+                # Get RAG response
+                try:
+                    print(f"\n📊 STARTING RAG PROCESS...")
+                    
+                    # Get query embedding
+                    print(f"🔤 Getting embedding for query: '{request.message[:100]}...'")
+                    query_embedding = get_embedding(request.message, title=f"Query for paper {paper.arxiv_id}")
+                    print(f"✅ Generated embedding with dimension: {len(query_embedding) if query_embedding else 'None'}")
+                    
+                    # Get the paper's collection
+                    collection_name = f"paper_{paper.arxiv_id}"
+                    print(f"🗂️  Getting collection: {collection_name}")
+                    collection = chroma_client.get_collection(name=collection_name)
+                    collection_count = collection.count()
+                    print(f"✅ Collection found with {collection_count} documents")
+                    
+                    # Query the collection
+                    total_results = max(request.content_chunks + request.section_chunks * 2, 20)
+                    print(f"🔍 Querying collection for {total_results} results...")
+                    results = collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=total_results,
+                        include=['documents', 'metadatas', 'distances']
+                    )
+                    
+                    result_count = len(results['documents'][0]) if results['documents'] and results['documents'][0] else 0
+                    print(f"✅ Retrieved {result_count} results from vector search")
+                    
+                    # Separate results by content type
+                    content_results = []
+                    section_results = []
+                    
+                    print(f"\n📋 PROCESSING SEARCH RESULTS...")
+                    if results['documents'] and results['documents'][0]:
+                        for i in range(len(results['documents'][0])):
+                            result = {
+                                'document': results['documents'][0][i],
+                                'metadata': results['metadatas'][0][i],
+                                'similarity_score': 1 - results['distances'][0][i]
+                            }
+                            
+                            content_type = result['metadata'].get('type', 'content')
+                            similarity_pct = result['similarity_score'] * 100
+                            
+                            if content_type == 'content':
+                                content_results.append(result)
+                                print(f"  📄 Content chunk {len(content_results)}: {similarity_pct:.1f}% similarity")
+                            elif content_type in ['section', 'subsection']:
+                                section_results.append(result)
+                                section_title = result['metadata'].get('section_title', 'Unknown')
+                                print(f"  📑 Section '{section_title}': {similarity_pct:.1f}% similarity")
+                    
+                    # Limit results
+                    original_content_count = len(content_results)
+                    original_section_count = len(section_results)
+                    content_results = content_results[:request.content_chunks]
+                    section_results = section_results[:request.section_chunks]
+                    
+                    print(f"📊 Results filtered: {len(content_results)}/{original_content_count} content, {len(section_results)}/{original_section_count} sections")
+                    
+                    # Format context for LLM
+                    context_content = ""
+                    sources = []
+                    highlighted_pages = []
+                    
+                    # Add content chunks
+                    if content_results:
+                        context_content += "\n=== RAW EXTRACTED TEXT ===\n"
+                        for idx, result in enumerate(content_results):
+                            metadata = result['metadata']
+                            chunk_index = int(metadata.get('chunk_index', idx))
+                            
+                            context_content += f"\n[C{idx + 1}] Raw Content Chunk {chunk_index + 1}:\n{result['document']}\n"
+                            sources.append({
+                                'index': f"C{idx + 1}",
+                                'type': 'content',
+                                'title': f'Raw Content Chunk {chunk_index + 1}',
+                                'chunk_index': chunk_index,
+                                'similarity_score': result['similarity_score'],
+                                'text': result['document']
+                            })
+                            
+                            highlighted_pages.append({
+                                'type': 'content',
+                                'chunk_index': chunk_index,
+                                'text': result['document'],
+                                'similarity_score': result['similarity_score']
+                            })
+                    
+                    # Add section chunks
+                    if section_results:
+                        context_content += "\n=== STRUCTURED SECTIONS ===\n"
+                        for idx, result in enumerate(section_results):
+                            metadata = result['metadata']
+                            content_type = metadata.get('type', 'section')
+                            
+                            if content_type == 'section':
+                                source_info = f"Section: {metadata.get('section_title', 'Unknown')}"
+                                if metadata.get('page_number'):
+                                    source_info += f" (Page {metadata.get('page_number')})"
+                            elif content_type == 'subsection':
+                                source_info = f"Subsection: {metadata.get('subsection_title', 'Unknown')} (under {metadata.get('section_title', 'Unknown')})"
+                                if metadata.get('page_number'):
+                                    source_info += f" (Page {metadata.get('page_number')})"
+                            
+                            context_content += f"\n[S{idx + 1}] {source_info}:\n{result['document']}\n"
+                            sources.append({
+                                'index': f"S{idx + 1}",
+                                'type': content_type,
+                                'title': metadata.get('section_title') or metadata.get('subsection_title', 'Section'),
+                                'page_number': metadata.get('page_number'),
+                                'similarity_score': result['similarity_score']
+                            })
 
-        # Handle streaming vs non-streaming response
-        if request.stream:
-            return StreamingResponse(
-                generate_streaming_chat_response(request, session.session_id, db),
-                media_type="text/plain"
-            )
+                    print(f"\n🧠 PREPARING CONTEXT FOR LLM...")
+                    print(f"Context length: {len(context_content)} characters")
+                    print(f"Sources prepared: {len(sources)}")
+                    
+                    # Generate answer using Perplexity
+                    answer_prompt = f"""You are a helpful research assistant. Answer the user's question about this academic paper based on the provided context.
 
-        # Generate non-streaming response
-        return await generate_non_streaming_chat_response(request, session.session_id, db)
+User Question: {request.message}
+
+Context from Paper {paper.arxiv_id}:
+{context_content}
+
+Instructions:
+1. Answer the question directly and accurately based on the provided context
+2. Use specific information from both raw content (C1, C2, etc.) and structured sections (S1, S2, etc.)
+3. Include relevant citations using [C1], [S2], etc. format referring to the numbered sources
+4. When referencing raw content, explain that it comes from the original extracted text
+5. When referencing sections, mention they are from the structured analysis
+6. If the context doesn't contain enough information to answer the question, say so clearly
+7. Keep your answer focused and concise while being informative
+8. Use technical language appropriate for the academic content
+
+Answer:"""
+
+                    print(f"🤖 CALLING PERPLEXITY API...")
+                    print(f"Prompt length: {len(answer_prompt)} characters")
+                    
+                    # Use Gemini Flash to summarize and generate response
+                    system_prompt = "You are a helpful research assistant specializing in academic paper analysis. Provide accurate, well-sourced answers that distinguish between raw extracted text and structured sections."
+                    perplexity_result = llm_service._call_perplexity_api(answer_prompt, system_prompt)
+                    answer = perplexity_result["content"]
+                    
+                    print(f"✅ Received response from Perplexity:")
+                    print(f"Response length: {len(answer)} characters")
+                    print(f"First 200 chars: {answer[:200]}...")
+
+                    # Generate highlighted images if we have content results
+                    highlighted_images = []
+                    if highlighted_pages:
+                        try:
+                            highlighted_images = pdf_processor.generate_page_highlights_for_query(
+                                paper.pdf_data, 
+                                highlighted_pages
+                            )
+                            # Add URLs for serving the highlighted images
+                            for img in highlighted_images:
+                                img['url'] = f"/api/highlighted-image/{img['id']}"
+                        except Exception as highlight_error:
+                            print(f"Error generating highlighted images: {str(highlight_error)}")
+
+                except Exception as rag_error:
+                    print(f"❌ Error in RAG processing: {str(rag_error)}")
+                    import traceback
+                    traceback.print_exc()
+                    answer = "I encountered an error while processing your question. Please try again."
+                    sources = []
+                    highlighted_images = []
+            else:
+                if paper:
+                    print(f"❌ Paper exists but not processed: {paper.arxiv_id}")
+                    print(f"Paper processed status: {paper.processed}")
+                else:
+                    print(f"❌ Paper not found for session paper_id: {session.paper_id}")
+                answer = "I don't have access to processed content for this paper yet. Please ensure the paper has been fully processed."
+                sources = []
+                highlighted_images = []
+        else:
+            print(f"\n💬 USING GENERAL MODE - No paper selected")
+            # Generate general response using Perplexity without RAG
+            try:
+                print(f"🤖 CALLING PERPLEXITY API (General mode)...")
+                system_prompt = "You are a helpful research assistant. Provide accurate, informative answers to research questions."
+                perplexity_result = llm_service._call_perplexity_api(request.message, system_prompt)
+                answer = perplexity_result["content"]
+                print(f"✅ Received general response from Perplexity")
+                print(f"Response length: {len(answer)} characters")
+                sources = []
+                highlighted_images = []
+            except Exception as llm_error:
+                print(f"❌ Error generating LLM response: {str(llm_error)}")
+                answer = "I encountered an error while generating a response. Please try again."
+                sources = []
+                highlighted_images = []
+
+        # Save assistant message
+        assistant_message = ChatMessage(
+            session_id=session.id,
+            role="assistant",
+            content=answer,
+            sources=json.dumps(sources) if sources else None,
+            highlighted_images=json.dumps(highlighted_images) if highlighted_images else None
+        )
+        db.add(assistant_message)
+        
+        # Update session timestamp
+        session.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(assistant_message)
+
+        return {
+            "user_message": {
+                "id": user_message.id,
+                "role": "user",
+                "content": user_message.content,
+                "created_at": user_message.created_at
+            },
+            "assistant_message": {
+                "id": assistant_message.id,
+                "role": "assistant",
+                "content": assistant_message.content,
+                "sources": sources,
+                "highlighted_images": highlighted_images,
+                "created_at": assistant_message.created_at
+            }
+        }
 
     except Exception as e:
         db.rollback()
@@ -2439,22 +2484,6 @@ async def submit_chat_feedback(request: ChatFeedbackRequest, db: Session = Depen
     
     return {"message": "Feedback submitted successfully"}
 
-@app.delete("/api/chat/{session_id}")
-async def delete_chat_session(session_id: str, db: Session = Depends(get_db)):
-    """Delete a chat session and all its messages."""
-    session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    
-    # Delete all messages in the session
-    db.query(ChatMessage).filter(ChatMessage.session_id == session.id).delete()
-    
-    # Delete the session
-    db.delete(session)
-    db.commit()
-    
-    return {"message": "Chat session deleted successfully"}
-
 @app.get("/api/chat/share/{share_url}", response_model=ChatSessionResponse)
 async def get_shared_chat(share_url: str, db: Session = Depends(get_db)):
     """Get a shared chat session by share URL."""
@@ -2465,268 +2494,268 @@ async def get_shared_chat(share_url: str, db: Session = Depends(get_db)):
     # Use the existing get_chat_session logic
     return await get_chat_session(session.session_id, db)
 
-@app.post("/api/chat/{session_id}/share")
-async def create_share_link(session_id: str, db: Session = Depends(get_db)):
-    """Create or get a share link for a chat session."""
-    session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Chat session not found")
+# Enhanced Chat Endpoints
+@app.get("/api/chat/models", response_model=AvailableModelsResponse)
+async def get_available_models():
+    """Get list of available Perplexity models with descriptions."""
+    models_info = llm_service.get_available_models()
+    formatted_models = {}
     
-    # Generate share URL if it doesn't exist
-    if not session.share_url:
-        session.share_url = str(uuid.uuid4())
-        session.is_public = True  # Make it public when sharing
-        db.commit()
-        db.refresh(session)
+    for model_key, model_data in models_info.items():
+        formatted_models[model_key] = ModelInfo(
+            name=model_data["name"],
+            description=model_data["description"],
+            type=model_data["type"],
+            context_length=model_data["context_length"],
+            features=model_data["features"]
+        )
     
-    return {"share_url": session.share_url}
+    return AvailableModelsResponse(models=formatted_models)
 
-# Streaming chat response generator
-async def generate_streaming_chat_response(request: ChatMessageRequest, session_id: str, db: Session):
-    """Generate streaming chat response with RAG support."""
+@app.post("/api/chat/enhanced-message")
+async def send_enhanced_chat_message(request: EnhancedChatMessageRequest, db: Session = Depends(get_db)):
+    """Send a chat message with enhanced features like model selection and streaming."""
     try:
-        print(f"\n🌊 STARTING STREAMING RESPONSE...")
-        
-        # Initialize response variables
-        sources = []
-        highlighted_images = []
-        citations = []
-        images = []
-        chain_of_thought = ""
-        context_content = ""
-        
-        # Re-query the session to ensure it's attached to the current database session
-        session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+        # Get chat session
+        session = db.query(ChatSession).filter(ChatSession.session_id == request.session_id).first()
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
-        
-        # Update session title if this is the first user message
-        message_count = db.query(ChatMessage).filter(ChatMessage.session_id == session.id).count()
-        if message_count == 1 and (session.title == 'New Chat' or not session.title):  # Only user message exists (just added) and title is default
-            paper = None
-            if session.paper_id:
-                paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
-            
-            # Create a meaningful title from first question + arXiv ID
-            first_question = request.message[:50] + "..." if len(request.message) > 50 else request.message
-            if paper:
-                new_title = f"{paper.arxiv_id}: {first_question}"
-            else:
-                new_title = first_question
-            
-            session.title = new_title
-            db.commit()
-            print(f"📝 Updated session title to: {new_title}")
-        
-        # Check if session has an associated paper for RAG
+
+        # Set the model for the LLM service
+        llm_service.set_model(request.model)
+
+        # Save user message
+        user_message = ChatMessage(
+            session_id=session.id,
+            role="user",
+            content=request.message
+        )
+        db.add(user_message)
+        db.commit()
+        db.refresh(user_message)
+
+        # Prepare response based on streaming preference
+        if request.stream:
+            return StreamingResponse(
+                generate_enhanced_streaming_response(request, session, db),
+                media_type="text/plain"
+            )
+        else:
+            return await generate_enhanced_response(request, session, db)
+
+    except Exception as e:
+        db.rollback()
+        print(f"Error in enhanced chat message: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def generate_enhanced_response(request: EnhancedChatMessageRequest, session: ChatSession, db: Session):
+    """Generate enhanced non-streaming response."""
+    answer = ""
+    sources = []
+    highlighted_images = []
+    citations = []
+    images = []
+    chain_of_thought = ""
+    
+    try:
+        # Check if session has an associated paper
         if session.paper_id:
-            print(f"\n🔍 USING RAG MODE - Paper ID: {session.paper_id}")
+            # Use RAG approach similar to existing logic
             paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
             
             if paper and paper.processed:
-                print(f"✅ Found processed paper: {paper.arxiv_id} - {paper.title}")
+                print(f"\n📄 PROCESSING PAPER-BASED QUERY")
+                print(f"Paper: {paper.title} ({paper.arxiv_id})")
                 
-                try:
-                    # Determine the query to use for vector search
-                    search_query = request.message
+                # RAG processing (similar to existing logic but using enhanced model)
+                collection = chroma_client.get_collection(name=f"paper_{paper.arxiv_id}")
+                
+                # Generate query embedding
+                query_embedding = get_embedding(request.message, title=f"Query for {paper.arxiv_id}")
+                
+                # Search for relevant content
+                results = collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=max(1, request.content_chunks + request.section_chunks),
+                    include=['documents', 'metadatas', 'distances']
+                )
+                
+                if results['documents'] and results['documents'][0]:
+                    # Process results and build context
+                    context_content = f"Paper: {paper.title}\nArXiv ID: {paper.arxiv_id}\n\n"
                     
-                    if request.query_mode == "enhanced":
-                        print(f"🚀 ENHANCED MODE: Improving query for vector search...")
-                        # Use Sonar model to enhance the query for better vector search
-                        enhancement_prompt = f"""You are a research assistant helping to improve search queries for academic papers. 
-
-Original user question: "{request.message}"
-
-Paper context: This is about the paper "{paper.title}" (arXiv:{paper.arxiv_id}).
-
-Task: Rewrite the user's question to be more specific and effective for search academic content. Focus on:
-1. Using technical terminology that would appear in academic papers
-2. Expanding abbreviations and adding relevant keywords
-3. Making the query more specific to academic/research context
-4. Keeping the core intent but making it more searchable
-
-Return ONLY the improved search query, nothing else."""
-
-                        try:
-                            enhancement_response = llm_service._call_perplexity_api(
-                                enhancement_prompt,
-                                "You are a helpful research assistant that improves search queries.",
-                                model="sonar",  # Use basic sonar for query enhancement
-                                stream=False
-                            )
-                            
-                            if enhancement_response and enhancement_response.get("content"):
-                                search_query = enhancement_response["content"].strip()
-                                print(f"✅ Enhanced query: '{search_query}'")
-                            else:
-                                print(f"⚠️ Query enhancement failed, using original query")
-                                search_query = request.message
-                        except Exception as e:
-                            print(f"⚠️ Query enhancement error: {str(e)}, using original query")
-                            search_query = request.message
-                    else:
-                        print(f"🔍 RAW MODE: Using original query for vector search")
-                    
-                    # Update the answer prompt to include the search query information
-                    print(f"🔤 Final search query: '{search_query}'")
-                    
-                    # Get query embedding
-                    print(f"🔤 Getting embedding for search query: '{search_query[:100]}...'")
-                    query_embedding = get_embedding(search_query, title=f"Query for paper {paper.arxiv_id}")
-                    print(f"✅ Generated embedding with dimension: {len(query_embedding) if query_embedding else 'None'}")
-                    
-                    # Get the paper's collection
-                    collection_name = f"paper_{paper.arxiv_id}"
-                    print(f"🗂️  Getting collection: {collection_name}")
-                    collection = chroma_client.get_collection(name=collection_name)
-                    collection_count = collection.count()
-                    print(f"✅ Collection found with {collection_count} documents")
-                    
-                    # Query the collection
-                    total_results = max(request.content_chunks + request.section_chunks * 2, 20)
-                    print(f"🔍 Querying collection for {total_results} results...")
-                    results = collection.query(
-                        query_embeddings=[query_embedding],
-                        n_results=total_results,
-                        include=['documents', 'metadatas', 'distances']
-                    )
-                    
-                    result_count = len(results['documents'][0]) if results['documents'] and results['documents'][0] else 0
-                    print(f"✅ Retrieved {result_count} results from vector search")
-                    
-                    # Process RAG results
+                    # Separate content and section results
                     content_results = []
                     section_results = []
                     
-                    print(f"\n📋 PROCESSING SEARCH RESULTS...")
-                    if results['documents'] and results['documents'][0]:
-                        for i in range(len(results['documents'][0])):
-                            result = {
-                                'document': results['documents'][0][i],
-                                'metadata': results['metadatas'][0][i],
-                                'similarity_score': 1 - results['distances'][0][i]
-                            }
-                            
-                            content_type = result['metadata'].get('type', 'content')
-                            similarity_pct = result['similarity_score'] * 100
-                            
-                            if content_type == 'content':
-                                content_results.append(result)
-                                print(f"  📄 Content chunk {len(content_results)}: {similarity_pct:.1f}% similarity")
-                            elif content_type in ['section', 'subsection']:
-                                section_results.append(result)
-                                section_title = result['metadata'].get('section_title', 'Unknown')
-                                print(f"  📑 Section '{section_title}': {similarity_pct:.1f}% similarity")
+                    for i, (doc, metadata, distance) in enumerate(zip(
+                        results['documents'][0], results['metadatas'][0], results['distances'][0]
+                    )):
+                        similarity_score = 1 - distance
+                        result = {
+                            'document': doc,
+                            'metadata': metadata,
+                            'similarity_score': similarity_score
+                        }
+                        
+                        if metadata.get('type') == 'content':
+                            content_results.append(result)
+                        else:
+                            section_results.append(result)
                     
                     # Limit results
-                    original_content_count = len(content_results)
-                    original_section_count = len(section_results)
                     content_results = content_results[:request.content_chunks]
                     section_results = section_results[:request.section_chunks]
                     
-                    print(f"📊 Results filtered: {len(content_results)}/{original_content_count} content, {len(section_results)}/{original_section_count} sections")
-                    
-                    # Build context and sources
+                    # Build context content
                     if content_results:
-                        context_content += "\n=== RAW EXTRACTED TEXT ===\n"
+                        context_content += "=== CONTENT CHUNKS ===\n"
                         for idx, result in enumerate(content_results):
-                            metadata = result['metadata']
-                            chunk_index = int(metadata.get('chunk_index', idx))
-                            estimated_page = metadata.get('estimated_page', 'N/A')
-                            
-                            context_content += f"\n[C{idx + 1}] Raw Content Chunk {chunk_index + 1} (Est. Page {estimated_page}):\n{result['document']}\n"
+                            context_content += f"\n[C{idx + 1}] Content:\n{result['document']}\n"
                             sources.append({
                                 'index': f"C{idx + 1}",
                                 'type': 'content',
-                                'title': f'Raw Content Chunk {chunk_index + 1}',
-                                'chunk_index': chunk_index,
-                                'estimated_page': estimated_page,
-                                'similarity_score': result['similarity_score'],
-                                'text': result['document'][:200] + '...' if len(result['document']) > 200 else result['document'],
-                                'full_text': result['document'],  # Keep full text for highlighting
-                                'arxiv_id': paper.arxiv_id
+                                'title': f'Content Chunk {idx + 1}',
+                                'similarity_score': result['similarity_score']
                             })
                     
                     if section_results:
                         context_content += "\n=== STRUCTURED SECTIONS ===\n"
                         for idx, result in enumerate(section_results):
                             metadata = result['metadata']
-                            content_type = metadata.get('type', 'section')
-                            
-                            if content_type == 'section':
-                                source_info = f"Section: {metadata.get('section_title', 'Unknown')}"
-                                section_id = metadata.get('section_id', '')
-                            elif content_type == 'subsection':
-                                source_info = f"Subsection: {metadata.get('subsection_title', 'Unknown')} (under {metadata.get('section_title', 'Unknown')})"
-                                section_id = metadata.get('subsection_id', '')
-                            
-                            page_number = metadata.get('page_number', 'N/A')
-                            if page_number != 'N/A':
-                                source_info += f" (Page {page_number})"
-                            
-                            context_content += f"\n[S{idx + 1}] {source_info}:\n{result['document']}\n"
+                            context_content += f"\n[S{idx + 1}] {metadata.get('section_title', 'Section')}:\n{result['document']}\n"
                             sources.append({
                                 'index': f"S{idx + 1}",
-                                'type': content_type,
-                                'title': metadata.get('section_title') or metadata.get('subsection_title', 'Section'),
-                                'section_id': section_id,
-                                'page_number': page_number,
-                                'similarity_score': result['similarity_score'],
-                                'text': result['document'][:200] + '...' if len(result['document']) > 200 else result['document'],
-                                'full_text': result['document'],  # Keep full text for highlighting
-                                'arxiv_id': paper.arxiv_id
+                                'type': metadata.get('type', 'section'),
+                                'title': metadata.get('section_title', 'Section'),
+                                'similarity_score': result['similarity_score']
                             })
                     
-                    print(f"\n🧠 RAG CONTEXT PREPARED:")
-                    print(f"Context length: {len(context_content)} characters")
-                    print(f"Sources prepared: {len(sources)}")
-                    
-                    # Prepare RAG prompt
-                    answer_prompt = f"""You are a helpful research assistant. Answer the user's question about this academic paper based on the provided context.
+                    # Prepare prompt for enhanced model
+                    answer_prompt = f"""Answer the user's question about this academic paper based on the provided context.
 
 User Question: {request.message}
 
-Context from Paper {paper.arxiv_id} - {paper.title}:
+Context from Paper {paper.arxiv_id}:
 {context_content}
 
 Instructions:
 1. Answer the question directly and accurately based on the provided context
-2. Use specific information from both raw content (C1, C2, etc.) and structured sections (S1, S2, etc.)
-3. Include relevant citations using [C1], [S2], etc. format referring to the numbered sources
-4. When referencing raw content, explain that it comes from the original extracted text
-5. When referencing sections, mention they are from the structured analysis
-6. If the context doesn't contain enough information to answer the question, say so clearly
-7. Keep your answer focused and concise while being informative
-8. Use technical language appropriate for the academic content
+2. Use specific information from both content chunks (C1, C2, etc.) and sections (S1, S2, etc.)
+3. Include relevant citations using [C1], [S2], etc. format
+4. Keep your answer focused and informative
+5. Use appropriate technical language for academic content
 
 Answer:"""
                     
-                except Exception as rag_error:
-                    print(f"❌ Error in RAG processing: {str(rag_error)}")
-                    import traceback
-                    traceback.print_exc()
-                    answer_prompt = f"I encountered an error while processing the paper content. Please answer this general question: {request.message}"
-                    sources = []
+                    # Call Perplexity API with selected model
+                    system_prompt = "You are a helpful research assistant specializing in academic paper analysis. Provide accurate, well-sourced answers."
+                    
+                    perplexity_result = llm_service._call_perplexity_api(
+                        answer_prompt, 
+                        system_prompt, 
+                        model=request.model, 
+                        stream=False
+                    )
+                    
+                    answer = perplexity_result["content"]
+                    citations = perplexity_result.get("citations", [])
+                    images = perplexity_result.get("images", [])
+                    
+                    # Extract chain of thought for reasoning models
+                    if request.model in ["sonar-reasoning", "sonar-reasoning-pro"]:
+                        chain_of_thought, answer = llm_service._extract_chain_of_thought(answer)
+                
+                else:
+                    answer = "I couldn't find relevant content in the paper to answer your question."
             else:
-                print(f"❌ Paper not processed or not found: paper={paper}, processed={paper.processed if paper else 'None'}")
-                answer_prompt = f"The paper is not yet processed. Please answer this general question: {request.message}"
-                sources = []
+                answer = "The paper is not yet processed or not found."
         else:
-            print(f"\n💬 USING GENERAL MODE - No paper selected for session {session.session_id}")
-            print(f"Session details: title='{session.title}', paper_id={session.paper_id}")
-            answer_prompt = request.message
-            sources = []
+            # General query without paper context
+            system_prompt = "You are a helpful research assistant. Provide accurate, informative answers to research questions."
+            
+            perplexity_result = llm_service._call_perplexity_api(
+                request.message, 
+                system_prompt, 
+                model=request.model, 
+                stream=False
+            )
+            
+            answer = perplexity_result["content"]
+            citations = perplexity_result.get("citations", [])
+            images = perplexity_result.get("images", [])
+            
+            # Extract chain of thought for reasoning models
+            if request.model in ["sonar-reasoning", "sonar-reasoning-pro"]:
+                chain_of_thought, answer = llm_service._extract_chain_of_thought(answer)
+
+    except Exception as e:
+        print(f"Error generating enhanced response: {str(e)}")
+        answer = "I encountered an error while processing your question. Please try again."
+
+    # Save assistant message
+    assistant_message = ChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content=answer,
+        sources=json.dumps(sources) if sources else None,
+        highlighted_images=json.dumps(highlighted_images) if highlighted_images else None
+    )
+    db.add(assistant_message)
+    session.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(assistant_message)
+
+    # Format images for response
+    formatted_images = []
+    for img in images:
+        if isinstance(img, dict):
+            formatted_images.append(ChatImageResponse(
+                url=img.get("url", ""),
+                title=img.get("title"),
+                description=img.get("description")
+            ))
+
+    return EnhancedChatMessageResponse(
+        id=assistant_message.id,
+        role="assistant",
+        content=answer,
+        chain_of_thought=chain_of_thought if chain_of_thought else None,
+        sources=sources,
+        citations=citations,
+        images=formatted_images,
+        highlighted_images=highlighted_images,
+        model_used=request.model,
+        thumbs_up=None,
+        thumbs_down=None,
+        created_at=assistant_message.created_at
+    )
+
+async def generate_enhanced_streaming_response(request: EnhancedChatMessageRequest, session: ChatSession, db: Session):
+    """Generate enhanced streaming response."""
+    try:
+        # Similar logic to generate_enhanced_response but with streaming
+        context_content = ""
+        sources = []
         
-        # Prepare system prompt
-        system_prompt = "You are a helpful research assistant specializing in academic paper analysis. Provide accurate, well-sourced answers."
+        # Build context if paper is associated
+        if session.paper_id:
+            paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
+            if paper and paper.processed:
+                # Build context (simplified for streaming)
+                context_content = f"Based on paper: {paper.title} ({paper.arxiv_id})\n\nUser Question: {request.message}"
         
-        print(f"🤖 CALLING PERPLEXITY API (Streaming)...")
-        print(f"Model: {request.model}")
-        print(f"Prompt length: {len(answer_prompt)} characters")
+        # Prepare prompt
+        if context_content:
+            prompt = f"Answer this question about the academic paper:\n\n{context_content}"
+        else:
+            prompt = request.message
+        
+        system_prompt = "You are a helpful research assistant. Provide accurate, informative answers."
         
         # Get streaming response from Perplexity
         streaming_generator = llm_service._call_perplexity_api(
-            answer_prompt, 
+            prompt, 
             system_prompt, 
             model=request.model, 
             stream=True
@@ -2734,6 +2763,9 @@ Answer:"""
         
         # Stream the response
         full_content = ""
+        chain_of_thought = ""
+        citations = []
+        images = []
         
         for chunk in streaming_generator:
             if chunk["type"] == "content":
@@ -2754,7 +2786,6 @@ Answer:"""
                 # Send final metadata
                 metadata = {
                     "type": "metadata",
-                    "sources": sources,
                     "citations": citations,
                     "images": images,
                     "chain_of_thought": chain_of_thought,
@@ -2770,316 +2801,82 @@ Answer:"""
             session_id=session.id,
             role="assistant",
             content=full_content,
-            chain_of_thought=chain_of_thought,
-            sources=json.dumps(sources) if sources else None,
-            citations=json.dumps(citations) if citations else None,
-            images=json.dumps(images) if images else None,
-            highlighted_images=json.dumps(highlighted_images) if highlighted_images else None,
-            model_used=request.model
+            sources=json.dumps(sources) if sources else None
         )
         db.add(assistant_message)
         session.updated_at = datetime.utcnow()
         db.commit()
-        db.refresh(assistant_message)
         
-        print(f"✅ Saved assistant message to database with ID: {assistant_message.id}")
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         
     except Exception as e:
         error_msg = f"Error in streaming response: {str(e)}"
-        print(f"❌ {error_msg}")
-        import traceback
-        traceback.print_exc()
         yield f"data: {json.dumps({'type': 'error', 'content': error_msg})}\n\n"
 
-async def generate_non_streaming_chat_response(request: ChatMessageRequest, session_id: str, db: Session):
-    """Generate non-streaming chat response with RAG support."""
-    print(f"\n📝 GENERATING NON-STREAMING RESPONSE...")
+# Enhanced Chat Endpoints - Models endpoint MUST come before {session_id} route to avoid routing conflicts
+@app.get("/api/chat/models", response_model=AvailableModelsResponse)
+async def get_available_models_fixed():
+    """Get list of available Perplexity models with descriptions."""
+    models_info = llm_service.get_available_models()
+    formatted_models = {}
     
-    # Initialize response variables
-    sources = []
-    highlighted_images = []
-    citations = []
-    images = []
-    chain_of_thought = ""
-    context_content = ""
-    
-    try:
-        # Re-query the session to ensure it's attached to the current database session
-        session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
-        if not session:
-            raise HTTPException(status_code=404, detail="Chat session not found")
-        
-        # Check if session has an associated paper for RAG
-        if session.paper_id:
-            print(f"\n🔍 USING RAG MODE - Paper ID: {session.paper_id}")
-            paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
-            
-            if paper and paper.processed:
-                print(f"✅ Found processed paper: {paper.arxiv_id} - {paper.title}")
-                
-                try:
-                    # Determine the query to use for vector search
-                    search_query = request.message
-                    
-                    if request.query_mode == "enhanced":
-                        print(f"🚀 ENHANCED MODE: Improving query for vector search...")
-                        # Use Sonar model to enhance the query for better vector search
-                        enhancement_prompt = f"""You are a research assistant helping to improve search queries for academic papers. 
-
-Original user question: "{request.message}"
-
-Paper context: This is about the paper "{paper.title}" (arXiv:{paper.arxiv_id}).
-
-Task: Rewrite the user's question to be more specific and effective for semantic search in academic content. Focus on:
-1. Using technical terminology that would appear in academic papers
-2. Expanding abbreviations and adding relevant keywords
-3. Making the query more specific to academic/research context
-4. Keeping the core intent but making it more searchable
-
-Return ONLY the improved search query, nothing else."""
-
-                        try:
-                            enhancement_response = llm_service._call_perplexity_api(
-                                enhancement_prompt,
-                                "You are a helpful research assistant that improves search queries.",
-                                model="sonar",  # Use basic sonar for query enhancement
-                                stream=False
-                            )
-                            
-                            if enhancement_response and enhancement_response.get("content"):
-                                search_query = enhancement_response["content"].strip()
-                                print(f"✅ Enhanced query: '{search_query}'")
-                            else:
-                                print(f"⚠️ Query enhancement failed, using original query")
-                                search_query = request.message
-                        except Exception as e:
-                            print(f"⚠️ Query enhancement error: {str(e)}, using original query")
-                            search_query = request.message
-                    else:
-                        print(f"🔍 RAW MODE: Using original query for vector search")
-                    
-                    # Get query embedding
-                    print(f"🔤 Getting embedding for search query: '{search_query[:100]}...'")
-                    query_embedding = get_embedding(search_query, title=f"Query for paper {paper.arxiv_id}")
-                    print(f"✅ Generated embedding with dimension: {len(query_embedding) if query_embedding else 'None'}")
-                    
-                    # Get the paper's collection
-                    collection_name = f"paper_{paper.arxiv_id}"
-                    print(f"🗂️  Getting collection: {collection_name}")
-                    collection = chroma_client.get_collection(name=collection_name)
-                    collection_count = collection.count()
-                    print(f"✅ Collection found with {collection_count} documents")
-                    
-                    # Query the collection
-                    total_results = max(request.content_chunks + request.section_chunks * 2, 20)
-                    print(f"🔍 Querying collection for {total_results} results...")
-                    results = collection.query(
-                        query_embeddings=[query_embedding],
-                        n_results=total_results,
-                        include=['documents', 'metadatas', 'distances']
-                    )
-                    
-                    result_count = len(results['documents'][0]) if results['documents'] and results['documents'][0] else 0
-                    print(f"✅ Retrieved {result_count} results from vector search")
-                    
-                    # Process RAG results (same logic as streaming)
-                    content_results = []
-                    section_results = []
-                    
-                    print(f"\n📋 PROCESSING SEARCH RESULTS...")
-                    if results['documents'] and results['documents'][0]:
-                        for i in range(len(results['documents'][0])):
-                            result = {
-                                'document': results['documents'][0][i],
-                                'metadata': results['metadatas'][0][i],
-                                'similarity_score': 1 - results['distances'][0][i]
-                            }
-                            
-                            content_type = result['metadata'].get('type', 'content')
-                            similarity_pct = result['similarity_score'] * 100
-                            
-                            if content_type == 'content':
-                                content_results.append(result)
-                                print(f"  📄 Content chunk {len(content_results)}: {similarity_pct:.1f}% similarity")
-                            elif content_type in ['section', 'subsection']:
-                                section_results.append(result)
-                                section_title = result['metadata'].get('section_title', 'Unknown')
-                                print(f"  📑 Section '{section_title}': {similarity_pct:.1f}% similarity")
-                    
-                    # Limit results
-                    original_content_count = len(content_results)
-                    original_section_count = len(section_results)
-                    content_results = content_results[:request.content_chunks]
-                    section_results = section_results[:request.section_chunks]
-                    
-                    print(f"📊 Results filtered: {len(content_results)}/{original_content_count} content, {len(section_results)}/{original_section_count} sections")
-                    
-                    # Build context and sources (same logic as streaming)
-                    if content_results:
-                        context_content += "\n=== RAW EXTRACTED TEXT ===\n"
-                        for idx, result in enumerate(content_results):
-                            metadata = result['metadata']
-                            chunk_index = int(metadata.get('chunk_index', idx))
-                            estimated_page = metadata.get('estimated_page', 'N/A')
-                            
-                            context_content += f"\n[C{idx + 1}] Raw Content Chunk {chunk_index + 1} (Est. Page {estimated_page}):\n{result['document']}\n"
-                            sources.append({
-                                'index': f"C{idx + 1}",
-                                'type': 'content',
-                                'title': f'Raw Content Chunk {chunk_index + 1}',
-                                'chunk_index': chunk_index,
-                                'estimated_page': estimated_page,
-                                'similarity_score': result['similarity_score'],
-                                'text': result['document'][:200] + '...' if len(result['document']) > 200 else result['document'],
-                                'full_text': result['document'],  # Keep full text for highlighting
-                                'arxiv_id': paper.arxiv_id
-                            })
-                    
-                    if section_results:
-                        context_content += "\n=== STRUCTURED SECTIONS ===\n"
-                        for idx, result in enumerate(section_results):
-                            metadata = result['metadata']
-                            content_type = metadata.get('type', 'section')
-                            
-                            if content_type == 'section':
-                                source_info = f"Section: {metadata.get('section_title', 'Unknown')}"
-                                section_id = metadata.get('section_id', '')
-                            elif content_type == 'subsection':
-                                source_info = f"Subsection: {metadata.get('subsection_title', 'Unknown')} (under {metadata.get('section_title', 'Unknown')})"
-                                section_id = metadata.get('subsection_id', '')
-                            
-                            page_number = metadata.get('page_number', 'N/A')
-                            if page_number != 'N/A':
-                                source_info += f" (Page {page_number})"
-                            
-                            context_content += f"\n[S{idx + 1}] {source_info}:\n{result['document']}\n"
-                            sources.append({
-                                'index': f"S{idx + 1}",
-                                'type': content_type,
-                                'title': metadata.get('section_title') or metadata.get('subsection_title', 'Section'),
-                                'section_id': section_id,
-                                'page_number': page_number,
-                                'similarity_score': result['similarity_score'],
-                                'text': result['document'][:200] + '...' if len(result['document']) > 200 else result['document'],
-                                'full_text': result['document'],  # Keep full text for highlighting
-                                'arxiv_id': paper.arxiv_id
-                            })
-                    
-                    print(f"\n🧠 RAG CONTEXT PREPARED:")
-                    print(f"Context length: {len(context_content)} characters")
-                    print(f"Sources prepared: {len(sources)}")
-                    
-                    # Prepare RAG prompt
-                    answer_prompt = f"""You are a helpful research assistant. Answer the user's question about this academic paper based on the provided context.
-
-User Question: {request.message}
-
-Context from Paper {paper.arxiv_id} - {paper.title}:
-{context_content}
-
-Instructions:
-1. Answer the question directly and accurately based on the provided context
-2. Use specific information from both raw content (C1, C2, etc.) and structured sections (S1, S2, etc.)
-3. Include relevant citations using [C1], [S2], etc. format referring to the numbered sources
-4. When referencing raw content, explain that it comes from the original extracted text
-5. When referencing sections, mention they are from the structured analysis
-6. If the context doesn't contain enough information to answer the question, say so clearly
-7. Keep your answer focused and concise while being informative
-8. Use technical language appropriate for the academic content
-
-Answer:"""
-                    
-                except Exception as rag_error:
-                    print(f"❌ Error in RAG processing: {str(rag_error)}")
-                    import traceback
-                    traceback.print_exc()
-                    answer_prompt = f"I encountered an error while processing the paper content. Please answer this general question: {request.message}"
-                    sources = []
-            else:
-                print(f"❌ Paper not processed or not found")
-                answer_prompt = f"The paper is not yet processed. Please answer this general question: {request.message}"
-                sources = []
-        else:
-            print(f"\n💬 USING GENERAL MODE - No paper selected")
-            answer_prompt = request.message
-            sources = []
-        
-        # Prepare system prompt
-        system_prompt = "You are a helpful research assistant specializing in academic paper analysis. Provide accurate, well-sourced answers."
-        
-        print(f"🤖 CALLING PERPLEXITY API (Non-streaming)...")
-        print(f"Model: {request.model}")
-        print(f"Prompt length: {len(answer_prompt)} characters")
-        
-        # Get response from Perplexity
-        perplexity_result = llm_service._call_perplexity_api(
-            answer_prompt, 
-            system_prompt, 
-            model=request.model, 
-            stream=False
+    for model_key, model_data in models_info.items():
+        formatted_models[model_key] = ModelInfo(
+            name=model_data["name"],
+            description=model_data["description"],
+            type=model_data["type"],
+            context_length=model_data["context_length"],
+            features=model_data["features"]
         )
-        
-        answer = perplexity_result["content"]
-        citations = perplexity_result.get("citations", [])
-        images = perplexity_result.get("images", [])
-        
-        print(f"✅ Received response from Perplexity:")
-        print(f"Response length: {len(answer)} characters")
-        print(f"Citations: {len(citations)}")
-        print(f"Images: {len(images)}")
-        
-        # Extract chain of thought for reasoning models
-        if request.model in ["sonar-reasoning", "sonar-reasoning-pro"]:
-            chain_of_thought, answer = llm_service._extract_chain_of_thought(answer)
-            print(f"Chain of thought extracted: {len(chain_of_thought) if chain_of_thought else 0} characters")
-
-    except Exception as e:
-        print(f"❌ Error generating response: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        answer = "I encountered an error while processing your question. Please try again."
-        sources = []
-        citations = []
-        images = []
-        chain_of_thought = ""
-
-    # Save assistant message
-    assistant_message = ChatMessage(
-        session_id=session.id,
-        role="assistant",
-        content=answer,
-        chain_of_thought=chain_of_thought,
-        sources=json.dumps(sources) if sources else None,
-        citations=json.dumps(citations) if citations else None,
-        images=json.dumps(images) if images else None,
-        highlighted_images=json.dumps(highlighted_images) if highlighted_images else None,
-        model_used=request.model
-    )
-    db.add(assistant_message)
-    session.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(assistant_message)
     
-    print(f"✅ Saved assistant message to database with ID: {assistant_message.id}")
+    return AvailableModelsResponse(models=formatted_models)
 
-    return {
-        "user_message": {
-            "id": None,  # User message was already saved
-            "role": "user",
-            "content": request.message,
-            "created_at": datetime.utcnow().isoformat()
-        },
-        "assistant_message": {
-            "id": assistant_message.id,
-            "role": "assistant",
-            "content": answer,
-            "chain_of_thought": chain_of_thought,
-            "sources": sources,
-            "citations": citations,
-            "images": images,
-            "highlighted_images": highlighted_images,
-            "model_used": request.model,
-            "created_at": assistant_message.created_at.isoformat()
-        }
-    }
+@app.get("/api/chat/{session_id}", response_model=ChatSessionResponse)
+async def get_chat_session(session_id: str, db: Session = Depends(get_db)):
+    """Get a chat session by ID."""
+    session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    
+    # Get messages
+    messages = db.query(ChatMessage).filter(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at).all()
+    
+    # Convert messages to response format
+    message_responses = []
+    for msg in messages:
+        sources = json.loads(msg.sources) if msg.sources else None
+        highlighted_images = json.loads(msg.highlighted_images) if msg.highlighted_images else None
+        
+        message_responses.append(ChatMessageResponse(
+            id=msg.id,
+            role=msg.role,
+            content=msg.content,
+            sources=sources,
+            highlighted_images=highlighted_images,
+            thumbs_up=msg.thumbs_up,
+            thumbs_down=msg.thumbs_down,
+            created_at=msg.created_at
+        ))
+
+    # Get paper info if available
+    paper = None
+    if session.paper_id:
+        paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
+
+    return ChatSessionResponse(
+        id=session.id,
+        session_id=session.session_id,
+        title=session.title,
+        paper_id=session.paper_id,
+        paper_title=paper.title if paper else None,
+        arxiv_id=paper.arxiv_id if paper else None,
+        is_public=session.is_public,
+        share_url=session.share_url,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+        messages=message_responses
+    )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 

@@ -71,6 +71,27 @@ module.exports = {
       },
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'aurora': 'aurora 60s linear infinite',
+        'float': 'float 6s ease-in-out infinite',
+        'glow': 'glow 2s ease-in-out infinite alternate',
+      },
+      keyframes: {
+        aurora: {
+          from: {
+            backgroundPosition: '50% 50%, 50% 50%',
+          },
+          to: {
+            backgroundPosition: '350% 50%, 350% 50%',
+          },
+        },
+        float: {
+          '0%, 100%': { transform: 'translateY(0px)' },
+          '50%': { transform: 'translateY(-20px)' },
+        },
+        glow: {
+          '0%': { boxShadow: '0 0 5px rgb(59, 130, 246), 0 0 10px rgb(59, 130, 246), 0 0 15px rgb(59, 130, 246)' },
+          '100%': { boxShadow: '0 0 10px rgb(59, 130, 246), 0 0 20px rgb(59, 130, 246), 0 0 30px rgb(59, 130, 246)' },
+        },
       }
     },
   },

@@ -9,25 +9,46 @@ import {
   Home,
   MessageCircle,
   ExternalLink,
-  Share2
+  Share2,
+  Check,
+  Copy,
+  Database,
+  X,
+  ChevronDown
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
+import { motion, AnimatePresence } from 'motion/react';
+import ChainOfThought from '@/components/ChainOfThought';
+import ChatSidebar from '@/components/ChatSidebar';
 
 // Types
 interface ChatMessage {
   id: number;
   role: 'user' | 'assistant';
   content: string;
+  chain_of_thought?: string;
+  model_used?: string;
   sources?: Array<{
     index: string;
     type: string;
     title: string;
     similarity_score: number;
     page_number?: number;
+    section_id?: string;
+    chunk_index?: number;
+    estimated_page?: string | number;
+    arxiv_id?: string;
+    text?: string;
+  }>;
+  citations?: string[];
+  images?: Array<{
+    url: string;
+    title?: string;
+    description?: string;
   }>;
   highlighted_images?: Array<{
     id: string;
@@ -60,6 +81,34 @@ export default function SharedChatPage() {
   const [session, setSession] = useState<ChatSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [sourcesSidebarOpen, setSourcesSidebarOpen] = useState(false);
+  const [currentSources, setCurrentSources] = useState<{
+    sources: Array<{
+      index: string;
+      type: string;
+      title: string;
+      similarity_score: number;
+      page_number?: number;
+      section_id?: string;
+      chunk_index?: number;
+      estimated_page?: string | number;
+      arxiv_id?: string;
+      text?: string;
+    }>;
+    citations?: string[];
+    images?: Array<{
+      url: string;
+      title?: string;
+      description?: string;
+    }>;
+    highlighted_images?: Array<{
+      id: string;
+      page: number;
+      url: string;
+      text_preview: string;
+    }>;
+  }>({ sources: [], citations: [], images: [], highlighted_images: [] });
 
   useEffect(() => {
     if (share_url) {
@@ -91,7 +140,8 @@ export default function SharedChatPage() {
   const copyShareLink = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
-      alert('Share link copied to clipboard!');
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
     } catch (error) {
       console.error('Error copying to clipboard:', error);
     }
@@ -99,26 +149,34 @@ export default function SharedChatPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col h-screen bg-slate-100">
-        <header className="bg-white shadow-sm sticky top-0 z-50">
-          <div className="container mx-auto px-4 h-auto py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link href="/" className="text-blue-600 hover:text-blue-700 flex items-center self-start mt-1">
-                <Home className="w-6 h-6" />
-                <span className="sr-only">Home</span>
-              </Link>
-              <span className="text-black font-semibold text-2xl ml-1 mr-2 self-center">deeprxiv</span>
-              <div className="flex flex-col">
-                <h2 className="text-lg font-semibold text-slate-700">Loading shared chat...</h2>
+      <div className="flex flex-col h-screen bg-gray-900">
+        <header className="bg-gray-800 border-b border-gray-700 p-4">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between h-16">
+              <div className="flex items-center space-x-4">
+                <Link href="/" className="text-blue-400 hover:text-blue-300 transition-colors">
+                  <Home className="w-6 h-6" />
+                </Link>
+                <div className="flex items-center">
+                  <span className="text-2xl font-bold text-white">deep</span>
+                  <span className="text-2xl font-bold text-blue-400">rxiv</span>
+                </div>
+                <div className="h-6 w-px bg-gray-600"></div>
+                <span className="text-gray-300">Loading shared chat...</span>
               </div>
             </div>
           </div>
         </header>
         
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center bg-gray-900">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-slate-600">Loading shared conversation...</p>
+            <motion.div 
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-6"
+            />
+            <h3 className="text-lg font-medium text-white mb-2">Loading Conversation</h3>
+            <p className="text-gray-400">Please wait while we fetch the shared chat...</p>
           </div>
         </div>
       </div>
@@ -127,34 +185,51 @@ export default function SharedChatPage() {
 
   if (error) {
     return (
-      <div className="flex flex-col h-screen bg-slate-100">
-        <header className="bg-white shadow-sm sticky top-0 z-50">
-          <div className="container mx-auto px-4 h-auto py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link href="/" className="text-blue-600 hover:text-blue-700 flex items-center self-start mt-1">
-                <Home className="w-6 h-6" />
-                <span className="sr-only">Home</span>
-              </Link>
-              <span className="text-black font-semibold text-2xl ml-1 mr-2 self-center">deeprxiv</span>
-              <div className="flex flex-col">
-                <h2 className="text-lg font-semibold text-slate-700">Shared Chat Not Found</h2>
+      <div className="flex flex-col h-screen bg-gray-900">
+        <header className="bg-gray-800 border-b border-gray-700 p-4">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between h-16">
+              <div className="flex items-center space-x-4">
+                <Link href="/" className="text-blue-400 hover:text-blue-300 transition-colors">
+                  <Home className="w-6 h-6" />
+                </Link>
+                <div className="flex items-center">
+                  <span className="text-2xl font-bold text-white">deep</span>
+                  <span className="text-2xl font-bold text-blue-400">rxiv</span>
+                </div>
+                <div className="h-6 w-px bg-gray-600"></div>
+                <span className="text-red-400">Chat Not Found</span>
               </div>
             </div>
           </div>
         </header>
         
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center max-w-md">
-            <MessageCircle className="w-16 h-16 text-slate-400 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-slate-900 mb-2">Chat Not Available</h3>
-            <p className="text-slate-600 mb-6">{error}</p>
-            <Link 
-              href="/chat" 
-              className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Start New Chat
-            </Link>
-          </div>
+        <div className="flex-1 flex items-center justify-center bg-gray-900">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-center max-w-md mx-auto px-6"
+          >
+            <div className="w-20 h-20 bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+              <MessageCircle className="w-10 h-10 text-red-500" />
+            </div>
+            <h3 className="text-2xl font-bold text-white mb-3">Chat Not Available</h3>
+            <p className="text-gray-400 mb-8 leading-relaxed">{error}</p>
+            <div className="space-y-3">
+              <Link 
+                href="/chat" 
+                className="inline-flex items-center justify-center w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Start New Chat
+              </Link>
+              <Link 
+                href="/" 
+                className="inline-flex items-center justify-center w-full px-6 py-3 bg-gray-700 text-gray-200 font-medium rounded-lg hover:bg-gray-600 transition-colors"
+              >
+                Go Home
+              </Link>
+            </div>
+          </motion.div>
         </div>
       </div>
     );
@@ -164,179 +239,188 @@ export default function SharedChatPage() {
     return null;
   }
 
+  // Get the last assistant message to display sources from
+  const lastAssistantMessage = [...session.messages].reverse().find(m => m.role === 'assistant');
+  const sources = lastAssistantMessage?.sources || [];
+  const images = lastAssistantMessage?.highlighted_images || [];
+
   return (
-    <div className="flex flex-col h-screen bg-slate-100">
+    <div className="flex flex-col h-screen bg-gray-900">
       {/* Header */}
-      <header className="bg-white shadow-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 h-auto py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="text-blue-600 hover:text-blue-700 flex items-center self-start mt-1">
-              <Home className="w-6 h-6" />
-              <span className="sr-only">Home</span>
-            </Link>
-            <span className="text-black font-semibold text-2xl ml-1 mr-2 self-center">deeprxiv</span>
-            <div className="flex flex-col">
-              <h2 className="text-lg font-semibold text-slate-700 truncate max-w-xl" title={session.title}>
-                {session.title}
-              </h2>
-              {session.paper_title && (
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Paper: {session.paper_title}
-                </p>
-              )}
-              <p className="text-xs text-blue-600 mt-0.5">Shared conversation</p>
+      <header className="bg-gray-800 border-b border-gray-700 p-4">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4 min-w-0">
+              <Link href="/" className="text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0">
+                <Home className="w-6 h-6" />
+              </Link>
+              <div className="flex items-center flex-shrink-0">
+                <span className="text-2xl font-bold text-white">deep</span>
+                <span className="text-2xl font-bold text-blue-400">rxiv</span>
+              </div>
+              <div className="h-6 w-px bg-gray-600 flex-shrink-0"></div>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-lg font-semibold text-white truncate" title={session.title}>
+                  {session.title}
+                </h1>
+                <div className="flex items-center space-x-2 text-sm text-gray-400">
+                  {session.arxiv_id && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">
+                      {session.arxiv_id}
+                    </span>
+                  )}
+                  <span>•</span>
+                  <span>Shared conversation</span>
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={copyShareLink}
-              className="flex items-center gap-1 px-3 py-1 text-sm text-blue-600 hover:text-blue-700"
-            >
-              <Share2 className="w-4 h-4" />
-              Copy Link
-            </button>
-            <Link
-              href="/chat"
-              className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              Start Your Own Chat
-            </Link>
+            
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setSourcesSidebarOpen(!sourcesSidebarOpen)}
+                className="p-2 hover:bg-gray-700 rounded-full text-gray-300 hover:text-white transition-colors"
+                title={sourcesSidebarOpen ? "Hide sources" : "Show sources"}
+              >
+                <Database className="w-5 h-5" />
+              </button>
+              
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={copyShareLink}
+                className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg border transition-all ${
+                  copySuccess 
+                    ? 'bg-green-900/30 border-green-700 text-green-400' 
+                    : 'bg-gray-800 border-gray-600 text-gray-300 hover:bg-gray-700'
+                }`}
+                title="Copy share link"
+              >
+                {copySuccess ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span className="text-sm font-medium">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="w-4 h-4" />
+                    <span className="text-sm font-medium">Share</span>
+                  </>
+                )}
+              </motion.button>
+              
+              <Link
+                href="/chat"
+                className="flex items-center space-x-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span className="text-sm font-medium">New Chat</span>
+              </Link>
+            </div>
           </div>
         </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
         {/* Main Chat Area */}
-        <main className="flex-1 flex flex-col max-h-[calc(100vh-4rem)] overflow-hidden">
+        <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-8 space-y-6 bg-white">
-            {session.messages.length > 0 ? (
-              session.messages.map((msg, index) => (
-                <div key={index} className={`${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
-                  <div className={`inline-block max-w-4xl ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-900'} p-4 rounded-lg`}>
-                    {msg.role === 'user' ? (
-                      <p className="text-white">{msg.content}</p>
-                    ) : (
-                      <div className="prose prose-slate max-w-none">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkMath]}
-                          rehypePlugins={[rehypeKatex]}
-                          components={{
-                            code: ({ children, className }) => {
-                              const isInline = !className;
-                              if (isInline) {
-                                return <code className="bg-slate-200 px-1 py-0.5 rounded text-sm">{children}</code>;
-                              }
-                              return <pre className="bg-slate-200 p-4 rounded-lg overflow-x-auto"><code>{children}</code></pre>;
-                            }
-                          }}
-                        >
-                          {msg.content}
-                        </ReactMarkdown>
+          <div className="flex-1 overflow-y-auto min-h-0" style={{ marginRight: sourcesSidebarOpen ? '384px' : '0' }}>
+            <div className="max-w-4xl mx-auto px-4 py-4">
+              {session.messages.length > 0 ? (
+                <div className="space-y-6">
+                  {session.messages.map((msg, index) => (
+                    <div key={index} className="space-y-3">
+                      {/* Chain of Thought - Show at TOP for assistant messages */}
+                      {msg.role === 'assistant' && msg.chain_of_thought && (
+                        <ChainOfThought thinking={msg.chain_of_thought} />
+                      )}
+                    
+                      <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-3xl ${
+                          msg.role === 'user'
+                            ? 'bg-gray-700 text-white px-4 py-3 rounded-2xl'
+                            : 'text-white px-4 py-3 rounded-2xl'
+                        }`}>
+                          {msg.role === 'assistant' && msg.model_used && (
+                            <div className="flex items-center gap-2 mb-2 text-xs text-gray-400">
+                              <span className="capitalize">{msg.model_used.replace('-', ' ')}</span>
+                            </div>
+                          )}
+                          
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                            className={`prose ${msg.role === 'user' ? 'prose-invert' : 'prose-gray prose-invert'} max-w-none`}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
+                          
+                          {/* Sources and Citations - Enhanced display */}
+                          {msg.role === 'assistant' && (
+                            (msg.sources?.length ?? 0) > 0 || 
+                            (msg.citations?.length ?? 0) > 0 || 
+                            (msg.images?.length ?? 0) > 0 || 
+                            (msg.highlighted_images?.length ?? 0) > 0
+                          ) && (
+                            <button
+                              onClick={() => {
+                                setCurrentSources({
+                                  sources: msg.sources || [],
+                                  citations: msg.citations || [],
+                                  images: msg.images || [],
+                                  highlighted_images: msg.highlighted_images || []
+                                });
+                                setSourcesSidebarOpen(true);
+                              }}
+                              className="mt-2 text-xs text-blue-400 hover:text-blue-300 underline flex items-center gap-1"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              View {(msg.sources?.length || 0)} RAG sources
+                              {msg.citations && msg.citations.length > 0 && `, ${msg.citations.length} web citations`}
+                              {msg.images && msg.images.length > 0 && `, ${msg.images.length} images`}
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  ))}
                 </div>
-              ))
-            ) : (
-              <div className="text-center py-12">
-                <MessageCircle className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-slate-900 mb-2">No messages yet</h3>
-                <p className="text-slate-600">This shared conversation doesn't have any messages.</p>
-              </div>
-            )}
+              ) : (
+                <div className="text-center py-12">
+                  <MessageCircle className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-white mb-2">No messages yet</h3>
+                  <p className="text-gray-400">This shared conversation doesn't have any messages.</p>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Footer with action */}
-          <div className="bg-slate-50 border-t border-slate-200 p-6 text-center">
-            <p className="text-slate-600 mb-4">This is a shared conversation. Want to start your own?</p>
-            <Link
-              href="/chat"
-              className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <MessageCircle className="w-4 h-4" />
-              Start New Chat
-            </Link>
+          {/* Footer with input box mockup for design consistency */}
+          <div className="p-4 bg-gray-900" style={{ marginRight: sourcesSidebarOpen ? '384px' : '0' }}>
+            <div className="max-w-4xl mx-auto">
+              <div className="bg-gray-800 rounded-2xl p-4 shadow-lg text-center">
+                <p className="text-gray-400 mb-2">This is a shared conversation. Want to start your own?</p>
+                <Link
+                  href="/chat"
+                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  Start New Chat
+                </Link>
+              </div>
+            </div>
           </div>
         </main>
 
         {/* Right Sidebar - Sources and Images */}
-        {session.messages.length > 0 && (
-          <aside className="w-80 bg-slate-50 p-6 border-l border-slate-200 flex flex-col max-h-[calc(100vh-4rem)]">
-            <h3 className="text-lg font-semibold text-slate-800 mb-4">Source Information</h3>
-            
-            {/* Get sources from latest assistant message */}
-            {(() => {
-              const lastAssistantMessage = [...session.messages].reverse().find(m => m.role === 'assistant');
-              const sources = lastAssistantMessage?.sources || [];
-              const images = lastAssistantMessage?.highlighted_images || [];
-              
-              return (
-                <>
-                  {/* Images */}
-                  {images.length > 0 && (
-                    <div className="mb-6">
-                      <h4 className="text-sm font-medium text-slate-700 mb-2">Source Pages (Images)</h4>
-                      <div className="grid grid-cols-3 gap-2">
-                        {images.map((image, index) => (
-                          <div key={index} className="aspect-w-3 aspect-h-4 bg-slate-200 rounded-md overflow-hidden">
-                            <img
-                              src={image.url}
-                              alt={`Source page ${image.page}`}
-                              className="object-cover w-full h-full cursor-pointer hover:opacity-80"
-                              onClick={() => window.open(image.url, '_blank')}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* PDF Link */}
-                  {session.arxiv_id && (
-                    <button
-                      onClick={() => window.open(`https://arxiv.org/pdf/${session.arxiv_id}.pdf`, '_blank')}
-                      className="w-full flex items-center justify-center gap-2 border border-blue-600 text-blue-600 py-2.5 px-4 rounded-lg hover:bg-blue-50 transition-colors mb-6 text-sm font-medium"
-                    >
-                      <FileText className="w-4 h-4" />
-                      View in PDF
-                    </button>
-                  )}
-
-                  {/* Sources */}
-                  {sources.length > 0 && (
-                    <div className="mb-6 flex-grow overflow-y-auto space-y-4">
-                      <div className="bg-slate-100 p-4 rounded-lg">
-                        <h4 className="text-sm font-medium text-slate-700 mb-3">Sources Used</h4>
-                        <div className="space-y-2">
-                          {sources.map((source, index) => (
-                            <div key={index} className="text-xs">
-                              <div className="font-medium text-slate-900">
-                                [{source.index}] {source.title}
-                              </div>
-                              <div className="text-slate-600">
-                                Type: {source.type} | Score: {(source.similarity_score * 100).toFixed(1)}%
-                                {source.page_number && ` | Page: ${source.page_number}`}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-
-            {/* Bottom Navigation */}
-            <div className="mt-auto border-t border-slate-200 pt-4">
-              <Link href={session.arxiv_id ? `/abs/${session.arxiv_id}` : '/papers'} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-700 hover:bg-slate-200 transition-colors text-sm font-medium">
-                <ArrowLeft className="w-4 h-4 text-slate-500" />
-                <span>Back to {session.arxiv_id ? 'Paper' : 'Papers'}</span>
-              </Link>
-            </div>
-          </aside>
-        )}
+        <ChatSidebar
+          sources={currentSources.sources}
+          citations={currentSources.citations || []}
+          images={currentSources.images || []}
+          highlighted_images={currentSources.highlighted_images || []}
+          isOpen={sourcesSidebarOpen}
+          onClose={() => setSourcesSidebarOpen(false)}
+        />
       </div>
     </div>
   );

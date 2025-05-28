@@ -3,7 +3,7 @@ import requests
 import json
 from dotenv import load_dotenv
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Generator, Optional
 
 # Load environment variables
 load_dotenv()
@@ -13,18 +13,65 @@ class LLMService:
         # Initialize Perplexity API only
         self.api_url = "https://api.perplexity.ai/chat/completions"
         self.perplexity_api_key = os.getenv("PERPLEXITY_API_KEY")
-        self.model = "sonar"  # Using Perplexity's powerful model
+        self.model = "sonar"  # Default model
+        
+        # Available Perplexity models
+        self.available_models = {
+            "sonar": {
+                "name": "Sonar",
+                "description": "A lightweight, cost-effective search model optimized for quick, grounded answers with real-time web search.",
+                "type": "Non-reasoning",
+                "context_length": "128k",
+                "features": ["Real-time web search", "Fast responses", "Cost effective"]
+            },
+            "sonar-pro": {
+                "name": "Sonar Pro", 
+                "description": "An advanced search model designed for complex queries, delivering deeper content understanding with enhanced citation accuracy.",
+                "type": "Non-reasoning",
+                "context_length": "200k",
+                "features": ["2x more citations", "Advanced information retrieval", "Multi-step tasks"]
+            },
+            "sonar-reasoning": {
+                "name": "Sonar Reasoning",
+                "description": "A reasoning-focused model that applies Chain-of-Thought (CoT) reasoning for quick problem-solving and structured analysis.",
+                "type": "Reasoning",
+                "context_length": "128k", 
+                "features": ["Chain-of-thought reasoning", "Real-time search", "Problem solving"]
+            },
+            "sonar-reasoning-pro": {
+                "name": "Sonar Reasoning Pro",
+                "description": "A high-performance reasoning model leveraging advanced multi-step CoT reasoning and enhanced information retrieval.",
+                "type": "Reasoning",
+                "context_length": "128k",
+                "features": ["Enhanced CoT reasoning", "2x more citations", "Complex topics"]
+            }
+        }
         
         if not self.perplexity_api_key:
             print("WARNING: PERPLEXITY_API_KEY environment variable not set!")
     
-    def _call_perplexity_api(self, prompt, system_prompt="Be precise and concise."):
+    def set_model(self, model: str):
+        """Set the model to use for API calls."""
+        if model in self.available_models:
+            self.model = model
+        else:
+            raise ValueError(f"Model {model} not available. Available models: {list(self.available_models.keys())}")
+    
+    def get_available_models(self):
+        """Get list of available models with their descriptions."""
+        return self.available_models
+    
+    def _call_perplexity_api(self, prompt, system_prompt="Be precise and concise.", model=None, stream=False):
         """
         Makes a call to the Perplexity API with the given prompt.
         Returns the response text and citations.
+        Supports streaming if stream=True.
         """
+        current_model = model or self.model
+        
         print(f"\n🚀 PERPLEXITY API CALL")
-        print(f"Model: {self.model}")
+        print(f"Model: {current_model}")
+        print(f"Stream: {stream}")
         print(f"System prompt: {system_prompt[:100]}...")
         print(f"User prompt length: {len(prompt)} characters")
         print(f"User prompt preview: {prompt[:200]}...")
@@ -35,7 +82,7 @@ class LLMService:
         }
         
         payload = {
-            "model": self.model,
+            "model": current_model,
             "messages": [
                 {
                     "role": "system",
@@ -45,29 +92,44 @@ class LLMService:
                     "role": "user",
                     "content": prompt
                 }
-            ]
+            ],
+            "stream": stream,
+            "return_images": True,
+            "return_related_questions": False,
+            "temperature": 0.2,
+            "top_p": 0.9
         }
         
         try:
             print(f"📡 Sending request to Perplexity...")
-            response = requests.post(self.api_url, json=payload, headers=headers)
-            response.raise_for_status()
             
-            response_data = response.json()
-            content = response_data["choices"][0]["message"]["content"]
-            
-            # Extract citations if available
-            citations = response_data.get("citations", [])
-            
-            print(f"✅ Perplexity response received:")
-            print(f"Content length: {len(content)} characters")
-            print(f"Citations count: {len(citations)}")
-            print(f"Response preview: {content[:300]}...")
-            
-            return {
-                "content": content,
-                "citations": citations
-            }
+            if stream:
+                return self._handle_streaming_response(headers, payload)
+            else:
+                response = requests.post(self.api_url, json=payload, headers=headers)
+                response.raise_for_status()
+                
+                response_data = response.json()
+                content = response_data["choices"][0]["message"]["content"]
+                
+                # Extract citations if available
+                citations = response_data.get("citations", [])
+                
+                # Extract images if available (new feature)
+                images = response_data.get("images", [])
+                
+                print(f"✅ Perplexity response received:")
+                print(f"Content length: {len(content)} characters")
+                print(f"Citations count: {len(citations)}")
+                print(f"Images count: {len(images)}")
+                print(f"Response preview: {content[:300]}...")
+                
+                return {
+                    "content": content,
+                    "citations": citations,
+                    "images": images,
+                    "model_used": current_model
+                }
         except Exception as e:
             print(f"❌ Error calling Perplexity API: {str(e)}")
             if 'response' in locals() and hasattr(response, 'text'):
@@ -76,8 +138,117 @@ class LLMService:
                 print(f"Status code: {response.status_code}")
             return {
                 "content": f"Error: {str(e)}",
-                "citations": []
+                "citations": [],
+                "images": [],
+                "model_used": current_model
             }
+    
+    def _handle_streaming_response(self, headers, payload):
+        """Handle streaming response from Perplexity API."""
+        try:
+            response = requests.post(self.api_url, json=payload, headers=headers, stream=True)
+            response.raise_for_status()
+            
+            def generate_chunks():
+                citations = []
+                images = []
+                model_used = payload["model"]
+                full_response_data = None
+                
+                for line in response.iter_lines():
+                    if line:
+                        line = line.decode('utf-8')
+                        if line.startswith('data: '):
+                            line = line[6:]  # Remove 'data: ' prefix
+                            
+                            if line.strip() == '[DONE]':
+                                break
+                                
+                            try:
+                                chunk_data = json.loads(line)
+                                
+                                # Store the full response data for final metadata extraction
+                                full_response_data = chunk_data
+                                
+                                # Extract content delta
+                                if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                    delta = chunk_data['choices'][0].get('delta', {})
+                                    content = delta.get('content', '')
+                                    
+                                    if content:
+                                        yield {
+                                            "type": "content",
+                                            "content": content
+                                        }
+                                
+                                # Extract metadata from any chunk that has it
+                                if 'citations' in chunk_data:
+                                    citations = chunk_data['citations']
+                                if 'images' in chunk_data:
+                                    images = chunk_data['images']
+                                    
+                            except json.JSONDecodeError:
+                                continue
+                
+                # Extract final metadata from the complete response
+                if full_response_data:
+                    # Try to get citations and images from the final response
+                    if 'citations' in full_response_data:
+                        citations = full_response_data['citations']
+                    if 'images' in full_response_data:
+                        images = full_response_data['images']
+                    
+                    # Also check in the message content for citations
+                    if 'choices' in full_response_data and len(full_response_data['choices']) > 0:
+                        message = full_response_data['choices'][0].get('message', {})
+                        if 'citations' in message:
+                            citations = message['citations']
+                        if 'images' in message:
+                            images = message['images']
+                
+                print(f"🔍 Final streaming metadata: {len(citations)} citations, {len(images)} images")
+                
+                # Yield final metadata
+                yield {
+                    "type": "metadata",
+                    "citations": citations,
+                    "images": images,
+                    "model_used": model_used
+                }
+            
+            return generate_chunks()
+            
+        except Exception as e:
+            print(f"❌ Error in streaming response: {str(e)}")
+            def error_generator():
+                yield {
+                    "type": "error",
+                    "content": f"Error: {str(e)}",
+                    "citations": [],
+                    "images": [],
+                    "model_used": payload["model"]
+                }
+            return error_generator()
+    
+    def _extract_chain_of_thought(self, content: str) -> tuple[str, str]:
+        """
+        Extract chain of thought reasoning from sonar-reasoning models.
+        Returns (thinking_process, final_answer)
+        """
+        # For reasoning models, the response often contains <think> tags
+        if '<think>' in content and '</think>' in content:
+            think_start = content.find('<think>')
+            think_end = content.find('</think>') + 8
+            
+            thinking = content[think_start:think_end]
+            final_answer = content[think_end:].strip()
+            
+            # Clean up the thinking section
+            thinking = thinking.replace('<think>', '').replace('</think>', '').strip()
+            
+            return thinking, final_answer
+        
+        return "", content
     
     def extract_paper_metadata_flash(self, text_first_pages):
         """
@@ -174,21 +345,15 @@ class LLMService:
         - ONLY use KaTeX-supported functions: \\frac{}{}, \\sum_{}, \\int_{}, \\alpha, \\beta, \\gamma, etc.
         - For matrices: $$\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$$
         - For aligned equations: $$\\begin{align} x &= y \\\\ a &= b \\end{align}$$
-        - NEVER use unsupported LaTeX packages or commands
-        - Test all mathematical expressions for KaTeX compatibility
+        - NO AMSmath packages or unsupported LaTeX commands
+        - Test all math expressions for KaTeX compatibility
         
-        SECTION ORGANIZATION STRATEGY:
-        - Start with foundational concepts and motivation
-        - Progress through methodology and technical details
-        - Present results with clear interpretation
-        - End with implications and future directions
-        
-        CONTENT QUALITY STANDARDS:
-        - Each section should be substantial (200-500 words)
-        - Subsections should dive deeper into specific aspects (150-300 words)
-        - Include examples, analogies, and real-world applications where relevant
-        - Reference specific figures, equations, and tables from the paper
-        - Explain the "why" behind methodological choices
+        EDUCATIONAL STRUCTURE:
+        - Section titles should be clear learning objectives
+        - Subsection titles should address specific concepts or techniques
+        - Include practical examples and real-world applications
+        - Explain mathematical intuition before formal definitions
+        - Connect to related work and broader research themes
         """
         
         prompt = f"""
@@ -215,71 +380,57 @@ class LLMService:
                 ]
             }}
         ]
-
-        SECTION GUIDELINES:
         
-        1. **Foundation & Context** (1-2 sections)
-           - Research problem and motivation
-           - Key concepts and background theory
-           - Related work and positioning
-           
-        2. **Methodology & Approach** (2-3 sections)
-           - Core methodology with clear explanations
-           - Technical implementation details
-           - Novel contributions and innovations
-           
-        3. **Results & Analysis** (1-2 sections)
-           - Experimental setup and datasets
-           - Key findings with interpretation
-           - Performance analysis and comparisons
-           
-        4. **Impact & Future** (1 section)
-           - Significance and implications
-           - Limitations and future work
-           - Broader impact on the field
-
-        CONTENT REQUIREMENTS FOR EACH SECTION:
-        - Start with a clear overview of what this section covers
-        - Explain concepts progressively from simple to complex
-        - Include specific references: "As shown in Figure 2 on page 5..."
-        - Use LaTeX for mathematical expressions: $E = mc^2$
-        - Provide context for why each concept matters
-        - Connect to real-world applications when possible
-        - End with how this connects to the next section
-
-        SUBSECTION REQUIREMENTS:
-        - Each main section should have 2-4 focused subsections
-        - Subsections should explore specific aspects in depth
-        - Include code examples, algorithms, or detailed explanations
-        - Reference specific parts of the paper with page numbers
-        - Explain technical details with clear examples
-        - Show how concepts build upon each other
-
-        EXAMPLE SECTION STRUCTURE:
+        EXAMPLE STRUCTURE:
         ```json
-        {{
-            "id": "neural-architecture",
-            "title": "Neural Architecture Design",
-            "content": "This section explores the novel neural network architecture proposed in the paper. The authors introduce a transformer-based model with several key innovations...",
-            "citations": [1, 3, 7],
-            "page_number": 4,
-            "subsections": [
-                {{
-                    "id": "attention-mechanism",
-                    "title": "Multi-Head Attention Mechanism",
-                    "content": "The attention mechanism is the core of the proposed architecture. As detailed on page 4, the model uses...",
-                    "citations": [1, 5],
-                    "page_number": 4
-                }},
-                {{
-                    "id": "positional-encoding",
-                    "title": "Enhanced Positional Encoding",
-                    "content": "Building on standard positional encoding, the authors propose...",
-                    "citations": [1, 8],
-                    "page_number": 5
-                }}
-            ]
-        }}
+        [
+            {{
+                "id": "research-problem",
+                "title": "Understanding the Research Problem",
+                "content": "This section introduces the fundamental challenge addressed in this paper. The authors tackle [specific problem], which is crucial for [broader context]...",
+                "citations": [1, 2],
+                "page_number": 1,
+                "subsections": [
+                    {{
+                        "id": "problem-motivation",
+                        "title": "Why This Problem Matters",
+                        "content": "The motivation for this research stems from [context]. Current approaches face limitations such as...",
+                        "citations": [1],
+                        "page_number": 1
+                    }},
+                    {{
+                        "id": "existing-approaches",
+                        "title": "Current State of the Art",
+                        "content": "Previous work in this area includes [summary]. However, these methods have drawbacks...",
+                        "citations": [2, 3],
+                        "page_number": 2
+                    }}
+                ]
+            }},
+            {{
+                "id": "neural-architecture",
+                "title": "Neural Architecture Design",
+                "content": "This section explores the novel neural network architecture proposed in the paper. The authors introduce a transformer-based model with several key innovations...",
+                "citations": [1, 3, 7],
+                "page_number": 4,
+                "subsections": [
+                    {{
+                        "id": "attention-mechanism",
+                        "title": "Multi-Head Attention Mechanism",
+                        "content": "The attention mechanism is the core of the proposed architecture. As detailed on page 4, the model uses...",
+                        "citations": [1, 5],
+                        "page_number": 4
+                    }},
+                    {{
+                        "id": "positional-encoding",
+                        "title": "Enhanced Positional Encoding",
+                        "content": "Building on standard positional encoding, the authors propose...",
+                        "citations": [1, 8],
+                        "page_number": 5
+                    }}
+                ]
+            }}
+        ]
         ```
 
         PAPER TEXT TO ANALYZE:
@@ -288,11 +439,11 @@ class LLMService:
         Generate a comprehensive educational structure that makes this research accessible and engaging for researchers.
         """
         
-        # Use Perplexity for section generation
-        print("Sending section generation request to Perplexity API...")
+        # Use Perplexity Sonar Reasoning Pro for enhanced section generation
+        print("Sending section generation request to Perplexity API (sonar-reasoning-pro)...")
         try:
             print("Calling Perplexity API for section generation...")
-            result = self._call_perplexity_api(prompt, system_prompt)
+            result = self._call_perplexity_api(prompt, system_prompt, model="sonar-reasoning-pro")
         except Exception as perplexity_error:
             print(f"Error with Perplexity API: {str(perplexity_error)}")
             raise perplexity_error
@@ -543,7 +694,7 @@ class LLMService:
         
         print(f"Generating content for section/subsection: {section_title}")
         try:
-            result = self._call_perplexity_api(prompt, system_prompt)
+            result = self._call_perplexity_api(prompt, system_prompt, model="sonar-reasoning-pro")
             content = result["content"]
             citations = result["citations"]
             

@@ -1,3 +1,5 @@
+@import 'katex/dist/katex.min.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -102,5 +104,158 @@
 
   .input-field {
     @apply w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-colors duration-200;
+  }
+  
+  /* Line clamp utilities for text truncation */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* LaTeX/KaTeX styling for math rendering */
+  .latex-container .katex {
+    font-size: 1.1em;
+    color: inherit;
+  }
+  
+  .latex-container .katex-display {
+    margin: 1.5em 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-align: center;
+  }
+  
+  .latex-container .katex-display .katex {
+    display: inline-block;
+    text-align: center;
+  }
+  
+  /* Inline math styling */
+  .latex-container .katex:not(.katex-display) {
+    background-color: rgba(75, 85, 99, 0.1);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: inherit;
+  }
+  
+  /* Dark mode specific overrides */
+  .dark .latex-container .katex {
+    color: rgb(229, 231, 235); /* text-gray-200 */
+  }
+  
+  .dark .latex-container .katex:not(.katex-display) {
+    background-color: rgba(75, 85, 99, 0.2);
+  }
+  
+  /* Fix for prose styling compatibility */
+  .latex-container.prose .katex-display {
+    margin: 1.5rem 0;
+  }
+  
+  .latex-container.prose p:has(.katex-display) {
+    margin: 0;
+  }
+  
+  /* Scrollable math for long equations */
+  .latex-container .katex-display {
+    max-width: 100%;
+  }
+  
+  /* Enhanced LaTeX support for chat interface */
+  .katex-display-wrapper {
+    margin: 1.5rem 0;
+    text-align: center;
+    overflow-x: auto;
+  }
+  
+  .katex-display-wrapper .katex {
+    display: inline-block;
+    margin: 0 auto;
+    text-align: center;
+  }
+  
+  .math-paragraph {
+    margin: 1.5rem 0;
+    text-align: center;
+  }
+  
+  /* Force KaTeX to inherit text color in dark mode */
+  .latex-container .katex,
+  .latex-container .katex .base,
+  .latex-container .katex .strut,
+  .latex-container .katex .frac-line,
+  .latex-container .katex .mord,
+  .latex-container .katex .mbin,
+  .latex-container .katex .mrel,
+  .latex-container .katex .mopen,
+  .latex-container .katex .mclose,
+  .latex-container .katex .mpunct,
+  .latex-container .katex .mop,
+  .latex-container .katex .mspace {
+    color: inherit !important;
+  }
+  
+  /* Enhanced inline math styling */
+  .latex-container .katex:not(.katex-display) {
+    background-color: rgba(75, 85, 99, 0.15);
+    padding: 3px 5px;
+    border-radius: 4px;
+    margin: 0 2px;
+    border: 1px solid rgba(75, 85, 99, 0.2);
+  }
+  
+  /* Dark mode enhancements */
+  .dark .latex-container .katex:not(.katex-display) {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+  
+  /* Display math enhancements */
+  .latex-container .katex-display {
+    background-color: rgba(75, 85, 99, 0.05);
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid rgba(75, 85, 99, 0.1);
+    margin: 1.5rem 0;
+  }
+  
+  .dark .latex-container .katex-display {
+    background-color: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.05);
+  }
+  
+  /* Ensure math symbols are visible */
+  .latex-container .katex .accent-body > .accent {
+    color: inherit !important;
+  }
+  
+  .latex-container .katex .sqrt > .root {
+    border-color: currentColor !important;
+  }
+  
+  .latex-container .katex .sqrt > .sqrt-line {
+    border-bottom-color: currentColor !important;
+  }
+  
+  /* Fix fraction lines */
+  .latex-container .katex .frac-line:after {
+    border-bottom-color: currentColor !important;
+  }
+  
+  /* Matrix and array delimiters */
+  .latex-container .katex .delim-size1,
+  .latex-container .katex .delim-size2,
+  .latex-container .katex .delim-size3,
+  .latex-container .katex .delim-size4 {
+    color: inherit !important;
   }
 }

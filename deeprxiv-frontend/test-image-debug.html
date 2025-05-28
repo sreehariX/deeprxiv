@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepRxiv - Image Debug Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #111827;
+            color: white;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .test-section {
+            background: #1f2937;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .image-item {
+            background: #374151;
+            border-radius: 8px;
+            padding: 10px;
+            text-align: center;
+        }
+        .image-item img {
+            max-width: 100%;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .image-item h4 {
+            margin: 10px 0 5px 0;
+            font-size: 14px;
+        }
+        .image-item p {
+            margin: 0;
+            font-size: 12px;
+            color: #9ca3af;
+        }
+        .error {
+            color: #ef4444;
+            background: #7f1d1d;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .success {
+            color: #10b981;
+            background: #064e3b;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .debug-info {
+            background: #0f172a;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        button:disabled {
+            background: #6b7280;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖼️ DeepRxiv Image Debug Test</h1>
+        <p>Test different types of images that should appear in the chat sidebar.</p>
+
+        <!-- Test Chat Message Creation -->
+        <div class="test-section">
+            <h2>📝 Test Chat Message with Images</h2>
+            <button onclick="createTestSession()">1. Create Test Session</button>
+            <button onclick="sendTestMessage()" id="sendBtn" disabled>2. Send Test Message</button>
+            <button onclick="fetchSessionImages()" id="fetchBtn" disabled>3. Fetch Session Images</button>
+            <div id="sessionInfo" class="debug-info"></div>
+        </div>
+
+        <!-- Paper Images Test -->
+        <div class="test-section">
+            <h2>📄 Paper Images (highlighted_images)</h2>
+            <button onclick="testPaperImages()">Test Paper Images</button>
+            <div id="paperImagesResult"></div>
+            <div id="paperImagesDisplay" class="image-grid"></div>
+        </div>
+
+        <!-- Web Images Test -->
+        <div class="test-section">
+            <h2>🌐 Web Images (Perplexity images)</h2>
+            <button onclick="testWebImages()">Test Web Images</button>
+            <div id="webImagesResult"></div>
+            <div id="webImagesDisplay" class="image-grid"></div>
+        </div>
+
+        <!-- API Tests -->
+        <div class="test-section">
+            <h2>🔧 API Tests</h2>
+            <button onclick="testBackendAPI()">Test Backend API</button>
+            <button onclick="testImageEndpoints()">Test Image Endpoints</button>
+            <div id="apiTestResult"></div>
+        </div>
+
+        <!-- Debug Information -->
+        <div class="test-section">
+            <h2>🐛 Debug Information</h2>
+            <div id="debugInfo" class="debug-info">
+                Loading debug information...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let testSessionId = null;
+        const API_BASE = 'http://localhost:8000';
+
+        // Initialize debug info
+        window.addEventListener('load', () => {
+            updateDebugInfo();
+        });
+
+        function updateDebugInfo() {
+            const debugDiv = document.getElementById('debugInfo');
+            const info = {
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+                viewport: `${window.innerWidth}x${window.innerHeight}`,
+                apiBase: API_BASE,
+                testSessionId: testSessionId
+            };
+            debugDiv.textContent = JSON.stringify(info, null, 2);
+        }
+
+        async function createTestSession() {
+            try {
+                showMessage('sessionInfo', 'Creating test session...', 'info');
+                
+                const response = await fetch(`${API_BASE}/api/chat/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: 'Image Debug Test Session',
+                        is_public: true
+                    })
+                });
+
+                if (response.ok) {
+                    const session = await response.json();
+                    testSessionId = session.session_id;
+                    showMessage('sessionInfo', `✅ Session created: ${testSessionId}`, 'success');
+                    document.getElementById('sendBtn').disabled = false;
+                    updateDebugInfo();
+                } else {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                showMessage('sessionInfo', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function sendTestMessage() {
+            if (!testSessionId) {
+                showMessage('sessionInfo', '❌ No session created yet', 'error');
+                return;
+            }
+
+            try {
+                showMessage('sessionInfo', 'Sending test message...', 'info');
+                
+                const response = await fetch(`${API_BASE}/api/chat/message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: testSessionId,
+                        message: 'Show me images related to machine learning and neural networks',
+                        model: 'sonar',
+                        stream: false,
+                        query_mode: 'enhanced'
+                    })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showMessage('sessionInfo', '✅ Message sent successfully', 'success');
+                    document.getElementById('fetchBtn').disabled = false;
+                    
+                    // Display response metadata
+                    const metadata = {
+                        hasImages: !!(result.assistant_message.images && result.assistant_message.images.length > 0),
+                        imageCount: result.assistant_message.images ? result.assistant_message.images.length : 0,
+                        hasHighlightedImages: !!(result.assistant_message.highlighted_images && result.assistant_message.highlighted_images.length > 0),
+                        highlightedImageCount: result.assistant_message.highlighted_images ? result.assistant_message.highlighted_images.length : 0,
+                        hasSources: !!(result.assistant_message.sources && result.assistant_message.sources.length > 0),
+                        sourceCount: result.assistant_message.sources ? result.assistant_message.sources.length : 0
+                    };
+                    
+                    showMessage('sessionInfo', `📊 Response metadata: ${JSON.stringify(metadata, null, 2)}`, 'info');
+                } else {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                showMessage('sessionInfo', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function fetchSessionImages() {
+            if (!testSessionId) {
+                showMessage('sessionInfo', '❌ No session created yet', 'error');
+                return;
+            }
+
+            try {
+                showMessage('sessionInfo', 'Fetching session data...', 'info');
+                
+                const response = await fetch(`${API_BASE}/api/chat/${testSessionId}`);
+                
+                if (response.ok) {
+                    const session = await response.json();
+                    showMessage('sessionInfo', '✅ Session data fetched', 'success');
+                    
+                    // Analyze messages for images
+                    const messages = session.messages || [];
+                    let totalImages = 0;
+                    let totalHighlightedImages = 0;
+                    let totalSources = 0;
+                    
+                    messages.forEach(msg => {
+                        if (msg.images) totalImages += msg.images.length;
+                        if (msg.highlighted_images) totalHighlightedImages += msg.highlighted_images.length;
+                        if (msg.sources) totalSources += msg.sources.length;
+                    });
+                    
+                    const analysis = {
+                        messageCount: messages.length,
+                        totalImages,
+                        totalHighlightedImages,
+                        totalSources,
+                        lastMessage: messages.length > 0 ? {
+                            role: messages[messages.length - 1].role,
+                            hasImages: !!(messages[messages.length - 1].images && messages[messages.length - 1].images.length > 0),
+                            hasHighlightedImages: !!(messages[messages.length - 1].highlighted_images && messages[messages.length - 1].highlighted_images.length > 0)
+                        } : null
+                    };
+                    
+                    showMessage('sessionInfo', `📈 Session analysis: ${JSON.stringify(analysis, null, 2)}`, 'info');
+                } else {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                showMessage('sessionInfo', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testPaperImages() {
+            try {
+                showMessage('paperImagesResult', 'Testing paper images...', 'info');
+                
+                // Try to get a processed paper's images
+                const papersResponse = await fetch(`${API_BASE}/api/papers`);
+                if (!papersResponse.ok) throw new Error('Failed to fetch papers');
+                
+                const papers = await papersResponse.json();
+                const processedPaper = papers.find(p => p.processed);
+                
+                if (!processedPaper) {
+                    showMessage('paperImagesResult', '⚠️ No processed papers found', 'error');
+                    return;
+                }
+                
+                const imagesResponse = await fetch(`${API_BASE}/api/images/${processedPaper.arxiv_id}`);
+                if (!imagesResponse.ok) throw new Error('Failed to fetch paper images');
+                
+                const images = await imagesResponse.json();
+                showMessage('paperImagesResult', `✅ Found ${images.length} paper images`, 'success');
+                
+                displayImages('paperImagesDisplay', images, 'paper');
+                
+            } catch (error) {
+                showMessage('paperImagesResult', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testWebImages() {
+            // Simulate web images from Perplexity
+            const mockWebImages = [
+                {
+                    url: 'https://via.placeholder.com/300x200/3b82f6/ffffff?text=Mock+Web+Image+1',
+                    title: 'Mock Web Image 1',
+                    description: 'This is a mock web image for testing'
+                },
+                {
+                    url: 'https://via.placeholder.com/300x200/10b981/ffffff?text=Mock+Web+Image+2',
+                    title: 'Mock Web Image 2',
+                    description: 'Another mock web image'
+                }
+            ];
+            
+            showMessage('webImagesResult', `✅ Generated ${mockWebImages.length} mock web images`, 'success');
+            displayImages('webImagesDisplay', mockWebImages, 'web');
+        }
+
+        async function testBackendAPI() {
+            try {
+                showMessage('apiTestResult', 'Testing backend API...', 'info');
+                
+                const healthResponse = await fetch(`${API_BASE}/api`);
+                if (healthResponse.ok) {
+                    const health = await healthResponse.json();
+                    showMessage('apiTestResult', `✅ Backend API healthy: ${JSON.stringify(health)}`, 'success');
+                } else {
+                    throw new Error('Backend API not responding');
+                }
+                
+            } catch (error) {
+                showMessage('apiTestResult', `❌ Backend API Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testImageEndpoints() {
+            try {
+                showMessage('apiTestResult', 'Testing image endpoints...', 'info');
+                
+                // Test papers endpoint
+                const papersResponse = await fetch(`${API_BASE}/api/papers`);
+                const papers = await papersResponse.json();
+                
+                let results = [`📊 Found ${papers.length} papers`];
+                
+                // Test image endpoint for each paper
+                for (const paper of papers.slice(0, 3)) { // Test first 3 papers only
+                    try {
+                        const imagesResponse = await fetch(`${API_BASE}/api/images/${paper.arxiv_id}`);
+                        const images = await imagesResponse.json();
+                        results.push(`📄 ${paper.arxiv_id}: ${images.length} images`);
+                    } catch (err) {
+                        results.push(`❌ ${paper.arxiv_id}: ${err.message}`);
+                    }
+                }
+                
+                showMessage('apiTestResult', results.join('\n'), 'success');
+                
+            } catch (error) {
+                showMessage('apiTestResult', `❌ Image endpoints error: ${error.message}`, 'error');
+            }
+        }
+
+        function displayImages(containerId, images, type) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            
+            images.forEach((image, index) => {
+                const imageDiv = document.createElement('div');
+                imageDiv.className = 'image-item';
+                
+                const img = document.createElement('img');
+                img.src = image.url || `/api/image/${image.id}`;
+                img.alt = image.title || `${type} image ${index + 1}`;
+                img.onclick = () => {
+                    window.open(img.src, '_blank');
+                };
+                img.onerror = () => {
+                    img.style.display = 'none';
+                    const errorDiv = document.createElement('div');
+                    errorDiv.textContent = `❌ Failed to load image`;
+                    errorDiv.style.color = '#ef4444';
+                    imageDiv.appendChild(errorDiv);
+                };
+                
+                const title = document.createElement('h4');
+                title.textContent = image.title || `${type} Image ${index + 1}`;
+                
+                const info = document.createElement('p');
+                if (type === 'paper') {
+                    info.textContent = `Page: ${image.page || 'Unknown'}, ID: ${image.id || 'Unknown'}`;
+                } else {
+                    info.textContent = image.description || 'Web image';
+                }
+                
+                imageDiv.appendChild(img);
+                imageDiv.appendChild(title);
+                imageDiv.appendChild(info);
+                container.appendChild(imageDiv);
+            });
+        }
+
+        function showMessage(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="${type}">${message}</div>`;
+        }
+    </script>
+</body>
+</html> 

@@ -21,7 +21,8 @@ import {
   Share2,
   Youtube,
   Search,
-  ArrowRight
+  ArrowRight,
+  MessageCircle
 } from 'lucide-react';
 import MarkdownRenderer from '../../../components/MarkdownRenderer';
 import PaperSection from '../../../components/PaperSection';
@@ -57,9 +58,39 @@ export default function PaperPage() {
         if (data) {
           setPaper(data);
           
+          // Check URL for section parameter
+          const urlParams = new URLSearchParams(window.location.search);
+          const sectionParam = urlParams.get('section');
+          
           // Set initial active section
           if (data.sections && data.sections.length > 0) {
-            setActiveSection(data.sections[0].id);
+            if (sectionParam) {
+              // Find section by title
+              const matchingSection = data.sections.find(s => 
+                s.title.toLowerCase() === sectionParam.toLowerCase()
+              );
+              
+              if (matchingSection) {
+                setActiveSection(matchingSection.id);
+              } else {
+                // Check subsections
+                for (const section of data.sections) {
+                  if (section.subsections) {
+                    const matchingSubsection = section.subsections.find(
+                      sub => sub.title.toLowerCase() === sectionParam.toLowerCase()
+                    );
+                    if (matchingSubsection) {
+                      setActiveSection(section.id);
+                      setActiveSubsection(matchingSubsection.id);
+                      break;
+                    }
+                  }
+                }
+              }
+            } else {
+              // Default to first section if no section parameter
+              setActiveSection(data.sections[0].id);
+            }
           }
           
           setError(null);
@@ -208,6 +239,37 @@ export default function PaperPage() {
     const searchQuery = encodeURIComponent(`${paper.title} research paper`);
     window.open(`https://www.perplexity.ai/search?q=${searchQuery}`, '_blank');
   };
+
+  // Function to open chat with this paper
+  const handleOpenChat = async () => {
+    if (!paper) return;
+    
+    try {
+      // Create a new chat session with this paper
+      const response = await fetch('http://localhost:8000/api/chat/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `Chat about ${paper.arxiv_id}`,
+          paper_id: paper.id,
+          is_public: true
+        })
+      });
+
+      if (response.ok) {
+        const session = await response.json();
+        // Redirect to chat with the new session
+        router.push(`/chat?session=${session.session_id}`);
+      } else {
+        // Fallback: redirect to chat page with paper info in URL
+        router.push(`/chat?arxiv_id=${paper.arxiv_id}&paper_id=${paper.id}`);
+      }
+    } catch (error) {
+      console.error('Error creating chat session:', error);
+      // Fallback: redirect to chat page with paper info in URL
+      router.push(`/chat?arxiv_id=${paper.arxiv_id}&paper_id=${paper.id}`);
+    }
+  };
   
   // Get current section
   const currentSection = paper?.sections?.find(section => section.id === activeSection);
@@ -345,6 +407,16 @@ export default function PaperPage() {
             </div>
             
             <div className="flex items-center space-x-4">
+            {/* Chat button */}
+            <button
+              onClick={handleOpenChat}
+              className="inline-flex items-center text-gray-300 hover:text-green-400 text-sm transition-colors"
+              title="Chat about this paper"
+            >
+              <MessageCircle className="w-3.5 h-3.5 mr-1" />
+              <span>Chat</span>
+            </button>
+
             {/* Search button */}
             <button
               onClick={() => setShowSearch(!showSearch)}

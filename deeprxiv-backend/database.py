@@ -108,9 +108,13 @@ class ChatMessage(Base):
     session_id = Column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
     role = Column(String, nullable=False)  # "user" or "assistant"
     content = Column(Text, nullable=False)
+    chain_of_thought = Column(Text, nullable=True)  # For reasoning models
     query_data = Column(Text, nullable=True)  # JSON string of query parameters and results
     sources = Column(Text, nullable=True)  # JSON string of sources used
+    citations = Column(Text, nullable=True)  # JSON string of citations
+    images = Column(Text, nullable=True)  # JSON string of images
     highlighted_images = Column(Text, nullable=True)  # JSON string of highlighted images
+    model_used = Column(String, nullable=True)  # Model name used for response
     thumbs_up = Column(Boolean, nullable=True)  # User feedback
     thumbs_down = Column(Boolean, nullable=True)  # User feedback
     suggested_answer = Column(Text, nullable=True)  # User suggested better answer
