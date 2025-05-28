@@ -17,7 +17,7 @@ payload = {
     ]
 }
 headers = {
-    "Authorization": "Bearer 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",
+    "Authorization": "Bearer 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", #demo key dont worry to use this haha
     "Content-Type": "application/json"
 }
 

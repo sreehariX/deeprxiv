@@ -82,7 +82,7 @@ export default function SharedChatPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
-  const [sourcesSidebarOpen, setSourcesSidebarOpen] = useState(false);
+  const [sourcesSidebarOpen, setSourcesSidebarOpen] = useState(true);
   const [currentSources, setCurrentSources] = useState<{
     sources: Array<{
       index: string;
@@ -115,6 +115,21 @@ export default function SharedChatPage() {
       loadSharedChat();
     }
   }, [share_url]);
+
+  // Set current sources when session loads
+  useEffect(() => {
+    if (session && session.messages.length > 0) {
+      const lastAssistantMessage = [...session.messages].reverse().find(m => m.role === 'assistant');
+      if (lastAssistantMessage) {
+        setCurrentSources({
+          sources: lastAssistantMessage.sources || [],
+          citations: lastAssistantMessage.citations || [],
+          images: lastAssistantMessage.images || [],
+          highlighted_images: lastAssistantMessage.highlighted_images || []
+        });
+      }
+    }
+  }, [session]);
 
   const loadSharedChat = async () => {
     try {
@@ -247,7 +262,7 @@ export default function SharedChatPage() {
   return (
     <div className="flex flex-col h-screen bg-gray-900">
       {/* Header */}
-      <header className="bg-gray-800 border-b border-gray-700 p-4">
+      <header className="bg-gray-800 border-b border-gray-700 p-4 relative z-50">
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4 min-w-0">
@@ -324,8 +339,8 @@ export default function SharedChatPage() {
         {/* Main Chat Area */}
         <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto min-h-0" style={{ marginRight: sourcesSidebarOpen ? '384px' : '0' }}>
-            <div className="max-w-4xl mx-auto px-4 py-4">
+          <div className="flex-1 overflow-y-auto min-h-0 bg-gray-900" style={{ marginRight: sourcesSidebarOpen ? '384px' : '0' }}>
+            <div className="max-w-4xl mx-auto px-4 py-4 bg-gray-900">
               {session.messages.length > 0 ? (
                 <div className="space-y-6">
                   {session.messages.map((msg, index) => (

@@ -873,7 +873,7 @@ export default function ChatPage() {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-gray-900 min-h-0" style={{ marginLeft: sidebarOpen ? '320px' : '0' }}>
         {/* Header */}
-        <div className="bg-gray-900 px-4 py-3 flex-shrink-0 fixed top-0 left-0 right-0 z-30" 
+        <div className="bg-gray-900 px-4 py-3 flex-shrink-0 fixed top-0 left-0 right-0 z-50" 
              style={{ marginLeft: sidebarOpen ? '320px' : '0' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -936,29 +936,30 @@ export default function ChatPage() {
           style={{ 
             marginRight: sourcesSidebarOpen ? '384px' : '0',
             marginTop: '72px', // Space for chat header only (no navigation)
-            height: 'calc(100vh - 222px)'  // Adjusted height for chat header and input area only
+            height: 'calc(100vh - 222px)',  // Adjusted height for chat header and input area only
+            backgroundColor: '#111827' // Ensure gray-900 background
           }}
         >
           <div className="max-w-4xl mx-auto px-4 py-4 pb-16">
             {messages.length > 0 && (
               <div className="space-y-6">
-                {messages.map((message) => (
+              {messages.map((message) => (
                   <div key={message.id} className="space-y-3" data-message-id={message.id}>
                     {/* Chain of Thought - Show at TOP for assistant messages */}
                     {message.role === 'assistant' && message.chain_of_thought && (
                       <ChainOfThought thinking={message.chain_of_thought} />
                     )}
                     
-                    <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-3xl ${
-                        message.role === 'user'
-                          ? 'bg-gray-700 text-white px-4 py-3 rounded-2xl'
-                          : 'text-white px-4 py-3 rounded-2xl'
-                      }`}>
-                        {message.role === 'assistant' && message.model_used && (
-                          <div className="flex items-center gap-2 mb-2 text-xs text-gray-400">
-                            {getModelIcon(message.model_used)}
-                            <span className="capitalize">{message.model_used.replace('-', ' ')}</span>
+                  <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-3xl ${
+                      message.role === 'user'
+                        ? 'bg-gray-700 text-white px-4 py-3 rounded-2xl'
+                        : 'text-white px-4 py-3 rounded-2xl'
+                    }`}>
+                      {message.role === 'assistant' && message.model_used && (
+                        <div className="flex items-center gap-2 mb-2 text-xs text-gray-400">
+                          {getModelIcon(message.model_used)}
+                          <span className="capitalize">{message.model_used.replace('-', ' ')}</span>
                             {message.query_mode && (
                               <>
                                 <span>•</span>
@@ -966,8 +967,8 @@ export default function ChatPage() {
                                 <span className="capitalize">{message.query_mode}</span>
                               </>
                             )}
-                            {message.isStreaming && <span className="animate-pulse">●</span>}
-                          </div>
+                          {message.isStreaming && <span className="animate-pulse">●</span>}
+          </div>
                         )}
                         
                         {message.role === 'user' && message.query_mode && (
@@ -975,12 +976,12 @@ export default function ChatPage() {
                             {getQueryModeIcon(message.query_mode)}
                             <span className="capitalize">{message.query_mode} Mode</span>
                           </div>
-                        )}
-                        
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkMath]}
-                          rehypePlugins={[rehypeKatex]}
-                          className={`prose ${message.role === 'user' ? 'prose-invert' : 'prose-gray prose-invert'} max-w-none latex-container`}
+                      )}
+                      
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                            className={`prose ${message.role === 'user' ? 'prose-invert' : 'prose-gray prose-invert'} max-w-none latex-container`}
                           components={{
                             // Enhanced LaTeX rendering with proper display handling
                             div: ({ node, className, children, ...props }) => {
@@ -1093,10 +1094,10 @@ export default function ChatPage() {
                               </div>
                             ),
                           }}
-                        >
-                          {message.content}
-                        </ReactMarkdown>
-                        
+                          >
+                            {message.content}
+                          </ReactMarkdown>
+                          
                         {/* Sources and Citations - Enhanced display */}
                         {(message.sources && message.sources.length > 0) || 
                          (message.citations && message.citations.length > 0) || 

@@ -480,13 +480,13 @@ export default function ChatSidebar({
                 >
                   <ExternalLink className="w-6 h-6" />
                 </button>
-                <button
-                  onClick={closeImageModal}
+              <button
+                onClick={closeImageModal}
                   className="text-white hover:text-gray-300 bg-black bg-opacity-50 rounded-full p-2"
                   title="Close"
-                >
-                  <X className="w-6 h-6" />
-                </button>
+              >
+                <X className="w-6 h-6" />
+              </button>
               </div>
               
               <img

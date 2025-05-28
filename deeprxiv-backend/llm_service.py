@@ -61,6 +61,27 @@ class LLMService:
         """Get list of available models with their descriptions."""
         return self.available_models
     
+    def _filter_chain_of_thought(self, content: str) -> str:
+        """
+        Filter out chain of thought content (thinking process) from reasoning model responses.
+        Removes <think>...</think> tags and any content inside them.
+        """
+        # Remove <think>...</think> blocks
+        import re
+        
+        # Remove think blocks (case insensitive, multiline)
+        think_pattern = r'<think>.*?</think>'
+        content = re.sub(think_pattern, '', content, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Also remove any standalone think tags
+        content = re.sub(r'</?think>', '', content, flags=re.IGNORECASE)
+        
+        # Clean up extra whitespace and newlines
+        content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)  # Replace multiple newlines with double newlines
+        content = content.strip()
+        
+        return content
+
     def _call_perplexity_api(self, prompt, system_prompt="Be precise and concise.", model=None, stream=False):
         """
         Makes a call to the Perplexity API with the given prompt.
@@ -329,8 +350,12 @@ class LLMService:
         Your task is to transform a research paper into an interactive, educational wiki-like experience
         that helps researchers understand complex concepts step by step.
         
+        IMPORTANT: Provide ONLY the final educational content. Do NOT include any thinking process, 
+        reasoning steps, or chain-of-thought analysis. Your response should be the direct educational 
+        structure without any <think> tags or reasoning explanations.
+        
         CRITICAL REQUIREMENTS:
-        1. Create 4-8 main sections that logically organize the paper's content
+        1. Create 6-8 main sections that logically organize the paper's content
         2. Each main section should have 2-4 subsections for detailed exploration
         3. Focus on educational value over strict paper structure adherence
         4. Use clear, descriptive titles that indicate what readers will learn
@@ -380,7 +405,7 @@ class LLMService:
                 ]
             }}
         ]
-        
+
         EXAMPLE STRUCTURE:
         ```json
         [
@@ -407,29 +432,29 @@ class LLMService:
                     }}
                 ]
             }},
-            {{
-                "id": "neural-architecture",
-                "title": "Neural Architecture Design",
-                "content": "This section explores the novel neural network architecture proposed in the paper. The authors introduce a transformer-based model with several key innovations...",
-                "citations": [1, 3, 7],
-                "page_number": 4,
-                "subsections": [
-                    {{
-                        "id": "attention-mechanism",
-                        "title": "Multi-Head Attention Mechanism",
-                        "content": "The attention mechanism is the core of the proposed architecture. As detailed on page 4, the model uses...",
-                        "citations": [1, 5],
-                        "page_number": 4
-                    }},
-                    {{
-                        "id": "positional-encoding",
-                        "title": "Enhanced Positional Encoding",
-                        "content": "Building on standard positional encoding, the authors propose...",
-                        "citations": [1, 8],
-                        "page_number": 5
-                    }}
-                ]
-            }}
+        {{
+            "id": "neural-architecture",
+            "title": "Neural Architecture Design",
+            "content": "This section explores the novel neural network architecture proposed in the paper. The authors introduce a transformer-based model with several key innovations...",
+            "citations": [1, 3, 7],
+            "page_number": 4,
+            "subsections": [
+                {{
+                    "id": "attention-mechanism",
+                    "title": "Multi-Head Attention Mechanism",
+                    "content": "The attention mechanism is the core of the proposed architecture. As detailed on page 4, the model uses...",
+                    "citations": [1, 5],
+                    "page_number": 4
+                }},
+                {{
+                    "id": "positional-encoding",
+                    "title": "Enhanced Positional Encoding",
+                    "content": "Building on standard positional encoding, the authors propose...",
+                    "citations": [1, 8],
+                    "page_number": 5
+                }}
+            ]
+        }}
         ]
         ```
 
@@ -452,9 +477,16 @@ class LLMService:
         try:
             content = result["content"]
             citations = result["citations"]
+            images = result.get("images", [])  # Get web images from Perplexity
+            
+            # Filter out chain of thought content from reasoning models
+            if "reasoning" in "sonar-reasoning-pro":
+                print("Filtering chain of thought content from reasoning model response...")
+                content = self._filter_chain_of_thought(content)
             
             print(f"Received raw response from Perplexity (length: {len(content)})")
             print(f"Citations count: {len(citations) if citations else 0}")
+            print(f"Web images count: {len(images) if images else 0}")
             
             # Sanitize the JSON content to fix escape sequence issues
             try:
@@ -516,10 +548,11 @@ class LLMService:
                         ]
                         break
             
-            # Add citations to the response
+            # Add citations and images to the response
             response_with_citations = {
                 "sections": sections,
-                "citations": citations
+                "citations": citations,
+                "images": images  # Include web images from Perplexity
             }
             
             return response_with_citations
@@ -539,7 +572,8 @@ class LLMService:
                         "subsections": []
                     }
                 ],
-                "citations": []
+                "citations": [],
+                "images": []
             }
     
     def generate_section_content(self, paper_text, section_title, section_content):
@@ -554,6 +588,10 @@ class LLMService:
         Your task is to create comprehensive, educational content for a specific section of a research paper.
         Think of yourself as writing for a high-quality educational platform like Khan Academy or Coursera,
         but for advanced researchers and graduate students.
+        
+        IMPORTANT: Provide ONLY the final educational content. Do NOT include any thinking process, 
+        reasoning steps, or chain-of-thought analysis. Your response should be direct educational 
+        content without any <think> tags or reasoning explanations.
         
         CONTENT CREATION PRINCIPLES:
         1. Start with clear context and learning objectives
@@ -697,18 +735,27 @@ class LLMService:
             result = self._call_perplexity_api(prompt, system_prompt, model="sonar-reasoning-pro")
             content = result["content"]
             citations = result["citations"]
+            images = result.get("images", [])  # Get web images from Perplexity
+            
+            # Filter out chain of thought content from reasoning models
+            print("Filtering chain of thought content from section content generation...")
+            content = self._filter_chain_of_thought(content)
             
             print(f"Generated content length: {len(content)} characters")
+            print(f"Section citations count: {len(citations) if citations else 0}")
+            print(f"Section web images count: {len(images) if images else 0}")
             
             return {
                 "content": content,
-                "citations": citations
+                "citations": citations,
+                "images": images  # Include web images from Perplexity
             }
         except Exception as e:
             print(f"Error generating section content for '{section_title}': {str(e)}")
             return {
                 "content": f"Content generation for section '{section_title}' failed due to: {str(e)}",
-                "citations": []
+                "citations": [],
+                "images": []
             }
 
     def _sanitize_json_string(self, json_str: str) -> str:
